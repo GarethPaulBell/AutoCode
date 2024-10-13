@@ -102,6 +102,7 @@ class UnitTest:
                 # Test failed, capture the error message
                 status = TestStatusEnum.FAILED
                 actual_result = stderr if stderr else "Test Failed with unknown error."
+                print(f"Test Failed: {actual_result}")
 
             return TestResult(
                 test_id=self.test_id,
@@ -222,6 +223,14 @@ def generate_julia_function(description: str):
     # The decorator is assumed to send this prompt to GPT-4 and return the generated code
     return prompt
 
+@ell.complex(model="gpt-4o", response_format=JuliaCodePackage)
+def modify_julia_function(description: str, function_code: str):
+    """You are a Julia programmer, and you need to modify a function based on the description. Maintain the existing function signature."""
+    prompt = f"Modify the BODY of the Julia function {function_code} based on the following description: {description}"
+        
+    # The decorator is assumed to send this prompt to GPT-4 and return the generated code
+    return prompt
+
 # Step 2: Test the generated function
 @ell.simple(model="gpt-4o")
 def write_test_case(function_name: str) -> str:
@@ -285,17 +294,18 @@ def test_function():
     print("\nExecuting Tests...")
     code_db.execute_tests()
 
-    """
+   
     
     # Step 5: Modify the function (e.g., add logging)
-    new_description = "calculate the factorial of a number and print the result"
+    new_description = "take the absolute value of the number before squaring it"
     print(f"\nModifying Julia function: {description} to {new_description}")
-    modified_code = generate_julia_function(new_description)
+    modified_code_message = modify_julia_function(new_description, generated_code.code)
+    modified_code = modified_code_message.parsed.code
     print(f"Modified Code:\n{modified_code}\n")
     code_db.modify_function(func.function_id, "Alice", "Added logging to the factorial function", modified_code)
     
-    # Step 6: Add a new unit test after modification
-    code_db.add_unit_test(func.function_id, "TestFactorial_Logging", "Test factorial with logging", test_calculate_sum_logging)
+    ## Step 6: Add a new unit test after modification
+    #code_db.add_unit_test(func.function_id, "TestFactorial_Logging", "Test factorial with logging", test_calculate_sum_logging)
     
     # Step 7: Execute all tests again to verify modifications
     print("\nExecuting Tests After Modification...")
@@ -309,7 +319,7 @@ def test_function():
     # Step 9: Display all modifications
     print("\nAll Modifications:")
     for mod in code_db.modifications:
-        print(mod) """
+        print(mod)
 
 # Run the integrated process
 if __name__ == "__main__":
