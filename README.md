@@ -1,24 +1,24 @@
 # Code Database for Automated Development
-Note: This is AI generated slop at the moment, and very brittle/ PRE ALPHA
 
-*Use at your own risk*
+*Note: This is a pre-alpha release, and the system is in a very early, brittle state. Use at your own risk.*
 
 ## Overview
 
-This repository contains a Python-based code management system for Julia designed to streamline the process of managing function definition, unit testing, and tracking modifications. It provides the ability to create functions, add unit tests, execute those tests, and log modifications to code with versioning and result tracking.
+This repository contains a Python-based code management system designed to streamline the development process in Julia. It focuses on managing function definitions, running unit tests, tracking modifications, and maintaining a versioned log of results. The goal is to provide a structured yet flexible approach to handling changes at the function level.
 
 ### Key Features
-- **Function Management:** The philosiphy of this system is to work at the level of functions as the smallest possible unit rather than files, track changes to these, and then continuously test any changes. Each function and assocated Meta Data are stored (input and output types, tests, documentation etc.) in a database rather than a text file allowing for more atomic changes, or at least that is the plan. Julia only really has structs and functions and so is perfect for this approach. Moving forward, the intention is that you can interact with each function personally or with the LLM of your choice.
-- **Unit Testing:** Associate unit tests with functions. These tests are automatically executed, and results are tracked with detailed statuses (Passed, Failed, etc.).
-- **Modification Logging:** Track all modifications to the code, including details about who modified it, when, and the nature of the changes.
-- **Test Results:** Logs the outcome of unit tests for further analysis, including execution dates and statuses.
+- **Function Management:** The system is built around the idea of managing functions as the smallest unit of code. Instead of working with entire files, functions and their associated metadata (such as input/output types, tests, and documentation) are stored in a database. This enables atomic changes and continuous testing. Given that Julia primarily revolves around structs and functions, this method aligns perfectly with its design philosophy. The long-term plan is to allow interaction with individual functions, either directly or through a language model of your choice.
+  
+- **Unit Testing:** Each function can have associated unit tests, which are automatically executed upon modification. The results are logged, providing detailed statuses such as "Passed" or "Failed."
 
+- **Modification Logging:** The system logs all changes made to the code, including information about who made the changes, when they occurred, and what was modified.
+
+- **Test Results:** The outcome of each unit test is stored in a log, allowing for further analysis, including execution dates and test statuses.
 
 ## License
 
-This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
+This project is licensed under the Unlicense.
 
 ## Contribution
 
-Feel free to submit issues or pull requests to improve the system.
-
+Contributions are welcome! Feel free to submit issues or pull requests to help improve the system.
