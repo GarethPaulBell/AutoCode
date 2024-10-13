@@ -245,22 +245,6 @@ def evaluate_output(expected_output: str, actual_output: str) -> str:
     prompt = f"Does the actual output `{actual_output}` match the expected `{expected_output}`?"
     return prompt
 
-# Sample Test Cases
-
-def test_calculate_sum(func: Callable) -> bool:
-    return func(2, 3) == 5
-
-def test_calculate_sum_negative(func: Callable) -> bool:
-    return func(-1, -1) == -2
-
-def test_calculate_sum_logging(func: Callable) -> bool:
-    try:
-        result = func(10, 20)
-        # Assume the function logs the result
-        return result == 30
-    except:
-        return False
-
 # Sample Usage
 
 def test_function():
