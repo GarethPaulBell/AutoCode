@@ -7,6 +7,7 @@
 This repository contains a Python-based code management system designed to streamline the development process in Julia. It focuses on managing function definitions, running unit tests, tracking modifications, and maintaining a versioned log of results. The goal is to provide a structured yet flexible approach to handling changes at the function level.
 
 ### Key Features
+
 - **Function Management:** The system is built around the idea of managing functions as the smallest unit of code. Instead of working with entire files, functions and their associated metadata (such as input/output types, tests, and documentation) are stored in a database. This enables atomic changes and continuous testing. Given that Julia primarily revolves around structs and functions, this method aligns perfectly with its design philosophy. The long-term plan is to allow interaction with individual functions, either directly or through a language model of your choice.
   
 - **Unit Testing:** Each function can have associated unit tests, which are automatically executed upon modification. The results are logged, providing detailed statuses such as "Passed" or "Failed."

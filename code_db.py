@@ -7,6 +7,9 @@ import uuid
 from typing import Callable, Dict, List, Optional
 from enum import Enum
 from pydantic import BaseModel, Field
+from colorama import Fore, Style, init
+from tabulate import tabulate
+init()
 
 # Enums for Test Status
 from enum import Enum
@@ -245,6 +248,76 @@ def evaluate_output(expected_output: str, actual_output: str) -> str:
     prompt = f"Does the actual output `{actual_output}` match the expected `{expected_output}`?"
     return prompt
 
+
+def pretty_print_function(code_db: CodeDatabase, function_id: str):
+    func = code_db.functions.get(function_id)
+    if not func:
+        print(f"{Fore.RED}Function ID {function_id} not found.{Style.RESET_ALL}")
+        return
+
+    print(f"{Fore.CYAN}\n\nFunction ID: {func.function_id}{Style.RESET_ALL}")
+    print(f"{Fore.CYAN}Name: {func.name}{Style.RESET_ALL}")
+    print(f"{Fore.CYAN}Description: {func.description}{Style.RESET_ALL}")
+    print(f"{Fore.CYAN}Creation Date: {func.creation_date.isoformat()}{Style.RESET_ALL}")
+    print(f"{Fore.CYAN}Last Modified Date: {func.last_modified_date.isoformat()}{Style.RESET_ALL}")
+    print(f"{Fore.CYAN}\nCode Snippet:\n ```julia\n {func.code_snippet}{Style.RESET_ALL}```")
+
+    print(f"{Fore.YELLOW}\nUnit Tests:{Style.RESET_ALL}")
+    for test in func.unit_tests:
+        print(f"{Fore.GREEN}Test ID: {test.test_id}{Style.RESET_ALL}")
+        print(f"{Fore.GREEN}Name: {test.name}{Style.RESET_ALL}")
+        print(f"{Fore.GREEN}Description: {test.description}{Style.RESET_ALL}")
+        print(f"{Fore.GREEN}Test Case:\n{test.test_case}{Style.RESET_ALL}")
+        print()
+
+    print(f"{Fore.YELLOW}Modifications:{Style.RESET_ALL}")
+    for mod in code_db.modifications:
+        if mod.function_id == function_id:
+            print(f"{Fore.MAGENTA}Modification ID: {mod.modification_id}{Style.RESET_ALL}")
+            print(f"{Fore.MAGENTA}Modifier: {mod.modifier}{Style.RESET_ALL}")
+            print(f"{Fore.MAGENTA}Description: {mod.description}{Style.RESET_ALL}")
+            print(f"{Fore.MAGENTA}Modification Date: {mod.modification_date.isoformat()}{Style.RESET_ALL}")
+            print()
+
+    print(f"{Fore.YELLOW}Test Results:{Style.RESET_ALL}")
+    for result in code_db.test_results:
+        if result.function_id == function_id:
+            print(f"{Fore.BLUE}Result ID: {result.result_id}{Style.RESET_ALL}")
+            print(f"{Fore.BLUE}Test ID: {result.test_id}{Style.RESET_ALL}")
+            print(f"{Fore.BLUE}Actual Result: {result.actual_result}{Style.RESET_ALL}")
+            print(f"{Fore.BLUE}Status: {result.status.value}{Style.RESET_ALL}")
+            print(f"{Fore.BLUE}Execution Date: {result.execution_date.isoformat()}{Style.RESET_ALL}")
+            print()
+
+def pretty_print_functions_table(code_db: CodeDatabase):
+    # Collect data for the table
+    table_data = []
+    for func in code_db.functions.values():
+        last_test_result = get_last_test_result(code_db, func.function_id)
+        dot_color = get_dot_color(last_test_result)
+        table_data.append([func.function_id, func.name, func.description, dot_color])
+
+    # Define table headers
+    headers = [f"{Fore.CYAN}Function ID{Style.RESET_ALL}", f"{Fore.CYAN}Name{Style.RESET_ALL}", f"{Fore.CYAN}Description{Style.RESET_ALL}", f"{Fore.CYAN}Status{Style.RESET_ALL}"]
+
+    # Print the table
+    print(tabulate(table_data, headers=headers, tablefmt="grid"))
+
+def get_last_test_result(code_db: CodeDatabase, function_id: str) -> str:
+    for result in code_db.test_results[::-1]:
+        if result.function_id == function_id:
+            return result.status.value
+    return ""
+
+def get_dot_color(status: str) -> str:
+    if status == TestStatusEnum.PASSED.value:
+        return f"{Fore.GREEN}✔{Style.RESET_ALL}"
+    elif status == TestStatusEnum.FAILED.value:
+        return f"{Fore.RED}✘{Style.RESET_ALL}"
+    else:
+        return ""
+
+                
 # Sample Usage
 
 def test_function():
@@ -252,58 +325,55 @@ def test_function():
     print(code_db)
 
     # Step 1: Generate a Julia function
-    description = "calculate the square of a number"
+    description = "calculate the factorial of a non-negative integer"
     print(f"Generating Julia function for: {description}")
     generated_code_message = generate_julia_function(description)
     generated_code = generated_code_message.parsed
 
-    print(f"Generated Code:\n{generated_code.code}\n")
-    print(f"Generated Tests:\n{generated_code.tests}\n")
-    print(f"Generated Input Types:\n{generated_code.input_types}\n")
-    print(f"Generated Return Types:\n{generated_code.return_types}\n")
-    print(f"Short Description\n{generated_code.short_description}\n")
-    print(f"Generated Function Name:\n{generated_code.function_name}\n")
-
-
-    
     # Step 2: Add the function to CodeDatabase
-    func = code_db.add_function(generated_code.function_name, generated_code.short_description,generated_code.code)
+    func = code_db.add_function(generated_code.function_name, generated_code.short_description, generated_code.code)
     
     # Step 3: Add unit tests for the function
     code_db.add_unit_test(func.function_id, generated_code.test_name, generated_code.test_description, generated_code.tests)
-    # code_db.add_unit_test(func.function_id, "TestFactorial_Negative", "Test factorial with negative integer", test_calculate_sum_negative)
     
-   
-    # Step 4: Execute all tests
-    print("\nExecuting Tests...")
-    code_db.execute_tests()
+    # Step 4: Test-Fix Loop
+    max_attempts = 5
+    attempt = 0
+    while attempt < max_attempts:
+        print(f"\nAttempt {attempt + 1} of {max_attempts}")
+        
+        # Execute tests
+        print("Executing Tests...")
+        results = code_db.execute_tests()
+        
+        # Check if any tests failed
+        failed_tests = [r for r in results if r.status == TestStatusEnum.FAILED]
+        
+        if not failed_tests:
+            print("All tests passed!")
+            break
+            
+        print(f"Failed tests: {len(failed_tests)}")
+        for result in failed_tests:
+            print(f"Test {result.test_id} failed: {result.actual_result}")
+        
+        # Ask AI to fix the code
+        fix_description = f"Fix the function. Current tests failed with: {[r.actual_result for r in failed_tests]}"
+        print(f"\nRequesting fix: {fix_description}")
+        fixed_code_message = modify_julia_function(fix_description)
+        fixed_code = fixed_code_message.parsed.code
+        
+        # Update function with fix
+        code_db.modify_function(func.function_id, "AI", f"Fix attempt {attempt + 1}", fixed_code)
+        
+        attempt += 1
+    
+    if attempt == max_attempts:
+        print("\nMaximum fix attempts reached without success")
+    else:
+        print(f"\nFixed in {attempt + 1} attempts")
 
-   
-    
-    # Step 5: Modify the function (e.g., add logging)
-    new_description = "take the absolute value of the number before squaring it"
-    print(f"\nModifying Julia function: {description} to {new_description}")
-    modified_code_message = modify_julia_function(new_description, generated_code.code)
-    modified_code = modified_code_message.parsed.code
-    print(f"Modified Code:\n{modified_code}\n")
-    code_db.modify_function(func.function_id, "Alice", "Added logging to the factorial function", modified_code)
-    
-    ## Step 6: Add a new unit test after modification
-    #code_db.add_unit_test(func.function_id, "TestFactorial_Logging", "Test factorial with logging", test_calculate_sum_logging)
-    
-    # Step 7: Execute all tests again to verify modifications
-    print("\nExecuting Tests After Modification...")
-    code_db.execute_tests()
-    
-    # Step 8: Display all test results
-    print("\nAll Test Results:")
-    for result in code_db.test_results:
-        print(result)
-    
-    # Step 9: Display all modifications
-    print("\nAll Modifications:")
-    for mod in code_db.modifications:
-        print(mod)
+
 
 # Run the integrated process
 if __name__ == "__main__":
