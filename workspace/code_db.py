@@ -1200,6 +1200,12 @@ except Exception:
     # Fallback to local definitions if not yet moved
     pass
 
+# Shim: import julia parser helpers if present
+try:
+    from src.autocode.julia_parsers import parse_julia_file, parse_julia_function, extract_julia_docstring
+except Exception:
+    pass
+
 _db = None
 load_db()
 if _db is None:
