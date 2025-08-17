@@ -150,19 +150,25 @@ def parse_julia_file(filepath: str) -> dict:
     """
     Parse a Julia file and extract functions, module info, and docstrings.
     Returns a dict with module name and list of functions.
+
+    Robustness improvements:
+      - handles multiline strings safely,
+      - strips comments when counting tokens,
+      - understands single-line `function f(...) = expr` forms,
+      - tracks nested function/end pairs and skips unterminated functions with a warning.
     """
     try:
         with open(filepath, 'r', encoding='utf-8') as f:
             content = f.read()
     except Exception as e:
         raise ValueError(f"Error reading Julia file: {e}")
-    
+
     lines = content.split('\n')
     result = {
         'module_name': None,
         'functions': []
     }
-    
+
     # Extract module name if present
     for line in lines:
         stripped = line.strip()
@@ -171,53 +177,102 @@ def parse_julia_file(filepath: str) -> dict:
             if module_match:
                 result['module_name'] = module_match.group(1)
                 break
-    
-    # Find all function definitions
+
     i = 0
+    in_multiline_string = False
     while i < len(lines):
-        line = lines[i].strip()
-        
-        # Look for function declarations
-        if line.startswith('function ') and not line.startswith('function('):
+        raw_line = lines[i]
+        line = raw_line
+
+        # Toggle multiline string state when encountering triple quotes on the line
+        if '"""' in line:
+            # toggle if an odd number of triple-quote tokens on the line
+            if line.count('"""') % 2 == 1:
+                in_multiline_string = not in_multiline_string
+
+        if in_multiline_string:
+            i += 1
+            continue
+
+        stripped = line.strip()
+
+        # Skip pure comment lines
+        if not stripped or stripped.startswith('#'):
+            i += 1
+            continue
+
+        # Look for function declarations that are not anonymous function literals
+        if stripped.startswith('function ') and not stripped.startswith('function('):
             # Extract any preceding docstring/comments (look backwards from current line)
             docstring, _ = extract_julia_docstring(lines, i-1)
-            
-            # Find the complete function body
+
             func_lines = []
-            func_started = False
-            indent_level = 0
-            
             j = i
+            # We'll count nested `function`/`end` tokens while ignoring comments and triple-quoted strings
+            token_stack = 0
+            saw_function_token = False
+            single_line_function = False
+
             while j < len(lines):
-                current_line = lines[j]
-                stripped_current = current_line.strip()
-                
-                if not func_started and stripped_current.startswith('function '):
-                    func_started = True
-                
-                if func_started:
-                    func_lines.append(current_line)
-                    
-                    # Count indentation changes
-                    if stripped_current.startswith('function '):
-                        indent_level += 1
-                    elif stripped_current == 'end' or stripped_current.startswith('end '):
-                        indent_level -= 1
-                        if indent_level == 0:
-                            break
+                cur = lines[j]
+
+                # Handle triple quote toggling inside the function body
+                if '"""' in cur:
+                    if cur.count('"""') % 2 == 1:
+                        in_multiline_string = not in_multiline_string
+
+                if in_multiline_string:
+                    func_lines.append(cur)
+                    j += 1
+                    continue
+
+                # Remove inline comments for token analysis
+                code_part = cur.split('#', 1)[0]
+
+                # If this is the first line and it is a single-line function using '=' then accept it as complete
+                if not saw_function_token:
+                    # Look for `function name(args) = expr` pattern
+                    if re.search(r'function\s+\w+\s*\([^)]*\)\s*=\s*', code_part):
+                        func_lines.append(cur)
+                        single_line_function = True
+                        saw_function_token = True
+                        j += 1
+                        break
+
+                # Count function occurrences and end occurrences in the code part
+                # Only count whole-word tokens
+                func_count = len(re.findall(r'\bfunction\b', code_part))
+                end_count = len(re.findall(r'\bend\b', code_part))
+
+                if func_count:
+                    token_stack += func_count
+                    saw_function_token = True
+                if end_count:
+                    token_stack -= end_count
+
+                func_lines.append(cur)
                 j += 1
-            
-            if func_lines:
+
+                # If we've seen at least the opening function and token_stack is back to zero, function is complete
+                if saw_function_token and token_stack <= 0:
+                    break
+
+            # If function was single-line or properly closed, parse it; otherwise skip and warn
+            if single_line_function or (saw_function_token and token_stack <= 0):
                 func_text = '\n'.join(func_lines)
                 func_info = parse_julia_function(func_text)
                 if func_info:
                     func_info['description'] = docstring
                     result['functions'].append(func_info)
-            
-            i = j + 1
+            else:
+                # skip truncated function to avoid importing broken code
+                print(f"Warning: skipping truncated or unterminated function starting at line {i+1} in {filepath}")
+
+            # Continue parsing after the block we just inspected
+            i = j
         else:
             i += 1
-    
+
     return result
 
 # Models are now provided by src.autocode.models and imported near the top of this file.
