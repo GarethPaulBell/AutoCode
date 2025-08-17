@@ -1186,6 +1186,20 @@ _property_test_runner()
     finally:
         os.remove(temp_filename)
 
+# Shim: import models from new package location to maintain compatibility during refactor
+try:
+    from src.autocode.models import (
+        TestStatusEnum,
+        TestResult,
+        Modification,
+        UnitTest,
+        Module,
+        Function
+    )
+except Exception:
+    # Fallback to local definitions if not yet moved
+    pass
+
 _db = None
 load_db()
 if _db is None:
@@ -1361,6 +1375,3 @@ def test_function():
         print("\nMaximum fix attempts reached without success")
     else:
         print(f"\nFixed in {attempt + 1} attempts")
-
-if __name__ == "__main__":
-    test_function()
