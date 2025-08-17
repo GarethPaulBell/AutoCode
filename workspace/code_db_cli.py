@@ -3,6 +3,8 @@ import sys
 import shlex
 import cmd
 import os, json, difflib
+import subprocess
+import pkg_resources
 
 try:
     import code_db
@@ -202,6 +204,9 @@ def main():
 
     # shell
     shell_parser = subparsers.add_parser("shell", help="Launch interactive shell for code_db.")
+
+    # doctor - environment checks
+    doctor = subparsers.add_parser("doctor", help="Check CLI environment and dependencies.")
 
     # list-tags
     subparsers.add_parser("list-tags", help="List all tags in the database.")
@@ -693,6 +698,34 @@ def main():
                 print(f"Error in property-based testing: {e}")
         elif args.command == "shell":
             CodeDbShell().cmdloop()
+        elif args.command == "doctor":
+            # Check for Julia in PATH
+            print("Checking Julia installation...")
+            julia_found = False
+            try:
+                julia_version = subprocess.check_output(["julia", "--version"], stderr=subprocess.STDOUT)
+                julia_found = True
+                print(f"Julia found: {julia_version.decode().strip()}")
+            except Exception:
+                print("Julia not found in PATH.")
+            
+            # Check for required Python packages
+            print("\nChecking Python packages...")
+            required_packages = ["argparse", "shlex", "cmd", "os", "json", "difflib", "code_db"]
+            installed_packages = {pkg.key for pkg in pkg_resources.working_set}
+            missing_packages = [pkg for pkg in required_packages if pkg not in installed_packages]
+            if missing_packages:
+                print("Missing packages:", ", ".join(missing_packages))
+            else:
+                print("All required packages are installed.")
+            
+            # Check OpenAI API key
+            print("\nChecking OpenAI API key...")
+            openai_key = os.getenv("OPENAI_API_KEY")
+            if openai_key:
+                print("OpenAI API key is set.")
+            else:
+                print("OpenAI API key is not set. Please set the OPENAI_API_KEY environment variable.")
         else:
             parser.print_help()
 

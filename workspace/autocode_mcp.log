@@ -1,0 +1,21 @@
+{"ts": "2025-08-17T05:09:19.507408Z", "event": "server_start", "data": {"pid": 87440, "log_path": "autocode_mcp.log"}}
+{"ts": "2025-08-17T05:09:19.507408Z", "event": "request", "data": {"id": 1, "method": "ping", "raw": {"jsonrpc": "2.0", "id": 1, "method": "ping"}}}
+{"ts": "2025-08-17T05:11:17.812473Z", "event": "server_start", "data": {"pid": 69804, "log_path": "autocode_mcp.log"}}
+{"ts": "2025-08-17T05:11:17.812473Z", "event": "request", "data": {"id": 1, "method": "ping", "raw": {"jsonrpc": "2.0", "id": 1, "method": "ping"}}}
+{"ts": "2025-08-17T05:11:24.573787Z", "event": "server_start", "data": {"pid": 39948, "log_path": "autocode_mcp.log"}}
+{"ts": "2025-08-17T05:11:24.589290Z", "event": "request", "data": {"id": 10, "method": "tools/list", "raw": {"jsonrpc": "2.0", "id": 10, "method": "tools/list"}}}
+{"ts": "2025-08-17T05:11:32.073899Z", "event": "server_start", "data": {"pid": 61172, "log_path": "autocode_mcp.log"}}
+{"ts": "2025-08-17T05:11:32.073899Z", "event": "request", "data": {"id": 11, "method": "tools/call", "raw": {"jsonrpc": "2.0", "id": 11, "method": "tools/call", "params": {"name": "list_functions", "arguments": {}}}}}
+{"ts": "2025-08-17T05:11:32.073899Z", "event": "tool_call", "data": {"id": 11, "tool": "list_functions", "arguments": {}, "result_summary_keys": null}}
+{"ts": "2025-08-17T05:12:56.273619Z", "event": "server_start", "data": {"pid": 59312, "log_path": "autocode_mcp.log"}}
+{"ts": "2025-08-17T05:12:56.273619Z", "event": "request", "data": {"id": 20, "method": "tools/call", "raw": {"jsonrpc": "2.0", "id": 20, "method": "tools/call", "params": {"name": "generate_function", "arguments": {"description": "Create a Julia function named square that returns the square of an integer n::Int.", "module": null}}}}}
+{"ts": "2025-08-17T05:12:57.873711Z", "event": "tool_call", "data": {"id": 20, "tool": "generate_function", "arguments": {"description": "Create a Julia function named square that returns the square of an integer n::Int.", "module": null}, "result_summary_keys": ["function_id", "name", "short_description", "code", "test", "modules"]}}
+{"ts": "2025-08-17T05:14:13.054214Z", "event": "server_start", "data": {"pid": 71368, "log_path": "autocode_mcp.log"}}
+{"ts": "2025-08-17T05:14:13.054214Z", "event": "request", "data": {"id": 30, "method": "tools/call", "raw": {"jsonrpc": "2.0", "id": 30, "method": "tools/call", "params": {"name": "run_tests", "arguments": {"function_id": "18f5f195-1190-491b-a5d7-8349ea05bc00"}}}}}
+{"ts": "2025-08-17T05:14:13.054214Z", "event": "tool_call", "data": {"id": 30, "tool": "run_tests", "arguments": {"function_id": "18f5f195-1190-491b-a5d7-8349ea05bc00"}, "result_summary_keys": null}}
+{"ts": "2025-08-17T05:14:47.841045Z", "event": "server_start", "data": {"pid": 2312, "log_path": "autocode_mcp.log"}}
+{"ts": "2025-08-17T05:14:47.841045Z", "event": "request", "data": {"id": 31, "method": "tools/call", "raw": {"jsonrpc": "2.0", "id": 31, "method": "tools/call", "params": {"name": "generate_test", "arguments": {"function_id": "18f5f195-1190-491b-a5d7-8349ea05bc00", "name": "square_basic", "description": "basic square test"}}}}}
+{"ts": "2025-08-17T05:14:49.140334Z", "event": "tool_call", "data": {"id": 31, "tool": "generate_test", "arguments": {"function_id": "18f5f195-1190-491b-a5d7-8349ea05bc00", "name": "square_basic", "description": "basic square test"}, "result_summary_keys": ["test_id", "code"]}}
+{"ts": "2025-08-17T05:14:55.955242Z", "event": "server_start", "data": {"pid": 10320, "log_path": "autocode_mcp.log"}}
+{"ts": "2025-08-17T05:14:55.955242Z", "event": "request", "data": {"id": 32, "method": "tools/call", "raw": {"jsonrpc": "2.0", "id": 32, "method": "tools/call", "params": {"name": "run_tests", "arguments": {"function_id": "18f5f195-1190-491b-a5d7-8349ea05bc00", "stream": false}}}}}
+{"ts": "2025-08-17T05:14:56.673491Z", "event": "tool_call", "data": {"id": 32, "tool": "run_tests", "arguments": {"function_id": "18f5f195-1190-491b-a5d7-8349ea05bc00", "stream": false}, "result_summary_keys": null}}
