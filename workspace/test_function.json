@@ -1,0 +1,14 @@
+{
+  "name": "test_function",
+  "description": "A simple test function that adds two numbers",
+  "code_snippet": "function test_function(a, b)\n    return a + b\nend",
+  "modules": ["test_module"],
+  "tags": ["testing", "simple"],
+  "unit_tests": [
+    {
+      "name": "test_basic_addition",
+      "description": "Test that the function correctly adds two numbers",
+      "test_case": "@assert test_function(2, 3) == 5\n@assert test_function(0, 0) == 0"
+    }
+  ]
+}
