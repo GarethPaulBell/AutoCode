@@ -31,29 +31,31 @@ from src.autocode.models import (
     Function,
 )
 
-DB_PATH = "code_db.pkl"
+# Use persistence module for DB file/location and save/load logic
+from src.autocode.persistence import save_db as persistence_save_db, load_db as persistence_load_db, DB_PATH as DB_PATH
+
+_db = None
 
 def save_db():
-    with open(DB_PATH, "wb") as f:
-        pickle.dump(_db, f)
+    # persist the in-memory _db using the dedicated persistence helper
+    return persistence_save_db(_db)
+
 
 def load_db():
     global _db
-    if os.path.exists(DB_PATH):
-        with open(DB_PATH, "rb") as f:
-            _db_loaded = pickle.load(f)
-            if isinstance(_db_loaded, CodeDatabase):
-                # Patch for legacy DBs: ensure modules attribute exists
-                if not hasattr(_db_loaded, "modules") or _db_loaded.modules is None:
-                    _db_loaded.modules = {}
-                # Patch for legacy DBs: ensure tags attribute exists
-                if not hasattr(_db_loaded, "tags") or _db_loaded.tags is None:
-                    _db_loaded.tags = set()
-                # Patch all functions to ensure tags attribute exists
-                for func in getattr(_db_loaded, "functions", {}).values():
-                    if not hasattr(func, "tags") or func.tags is None:
-                        func.tags = []
-                _db = _db_loaded
+    loaded = persistence_load_db()
+    if loaded is not None:
+        # Patch for legacy DBs: ensure modules and tags exist
+        if isinstance(loaded, CodeDatabase):
+            if not hasattr(loaded, "modules") or loaded.modules is None:
+                loaded.modules = {}
+            if not hasattr(loaded, "tags") or loaded.tags is None:
+                loaded.tags = set()
+            for func in getattr(loaded, "functions", {}).values():
+                if not hasattr(func, "tags") or func.tags is None:
+                    func.tags = []
+        _db = loaded
+    return loaded
 
 # Julia File Parsing Functions
 def parse_julia_function(func_text: str) -> dict:
@@ -698,30 +700,21 @@ def semantic_search_functions(query: str, top_k: int = 5):
         })
     return results
 
-# Use ELL/ell wrappers from the extracted module
-try:
-    from src.autocode.ell_wrappers import (
-        JuliaCodePackage,
-        generate_julia_function,
-        modify_julia_function,
-        write_test_case,
-        evaluate_output,
-    )
-except Exception:
-    # fall back to existing in-file definitions if import fails
-    pass
-
-# UI / pretty-print helpers extracted to src.autocode.ui
-try:
-    from src.autocode.ui import (
-        pretty_print_function,
-        pretty_print_functions_table,
-        get_last_test_result,
-        get_dot_color,
-    )
-except Exception:
-    # keep existing functions defined inline above if import fails
-    pass
+# Use extracted modules directly (no fallback paths). These modules were moved to src.autocode during the refactor.
+from src.autocode.semantic import semantic_search_functions
+from src.autocode.ell_wrappers import (
+    JuliaCodePackage,
+    generate_julia_function,
+    modify_julia_function,
+    write_test_case,
+    evaluate_output,
+)
+from src.autocode.ui import (
+    pretty_print_function,
+    pretty_print_functions_table,
+    get_last_test_result,
+    get_dot_color,
+)
 
 def generate_module_file(module_name: str, filepath: str, with_tests: bool = False):
     if module_name not in _db.modules:
@@ -933,42 +926,7 @@ _property_test_runner()
     finally:
         os.remove(temp_filename)
 
-# Shim: import models from new package location to maintain compatibility during refactor
-try:
-    from src.autocode.models import (
-        TestStatusEnum,
-        TestResult,
-        Modification,
-        UnitTest,
-        Module,
-        Function
-    )
-except Exception:
-    # Fallback to local definitions if not yet moved
-    pass
-
-# Shim: import julia parser helpers if present
-try:
-    from src.autocode.julia_parsers import parse_julia_file, parse_julia_function, extract_julia_docstring
-except Exception:
-    pass
-
-# Shim: persistence helpers
-try:
-    from src.autocode.persistence import save_db as _p_save_db, load_db as _p_load_db, DB_PATH as DB_PATH_SHIM
-    def save_db():
-        # preserve original no-arg API by delegating to persistence.save_db with the in-memory _db
-        return _p_save_db(_db)
-    def load_db():
-        # delegate to persistence loader and assign to _db if present
-        loaded = _p_load_db()
-        if loaded is not None:
-            globals()['_db'] = loaded
-        return loaded
-    if 'DB_PATH' not in globals():
-        DB_PATH = DB_PATH_SHIM
-except Exception:
-    pass
+# Models and parsers are imported from src.autocode at module top; no local shims required.
 
 _db = None
 load_db()
