@@ -67,30 +67,25 @@ class UnitTest:
         """
         print(f"Running Test '{self.name}' for Function ID {self.function_id}")
 
-        # Ensure the function code has matching 'function'/'end' pairs so the
-        # test code does not accidentally appear inside the function body.
-        import re
-        func_count = len(re.findall(r'^\s*function\b', function_code, flags=re.M))
-        end_count = len(re.findall(r'^\s*end\b', function_code, flags=re.M))
-        missing_ends = func_count - end_count
-        if missing_ends > 0:
-            function_code = function_code.rstrip() + '\n' + ('end\n' * missing_ends)
+        # Write the function code to its own temporary file and create a test file
+        # that includes it. This prevents test code from being accidentally
+        # parsed inside an unclosed function body.
+        with tempfile.NamedTemporaryFile(mode='w', suffix='.jl', delete=False) as func_file:
+            func_file.write(function_code)
+            func_filename = func_file.name
 
-        # Combine the function code and test case into one Julia script
-        julia_script = f"""
-{function_code}
+        # Convert Windows backslashes to forward slashes for Julia include compatibility
+        func_path_for_include = func_filename.replace('\\', '/')
 
-{self.test_case}
-"""
+        test_script = f'include("{func_path_for_include}")\n\n{self.test_case}\n'
 
-        # Write the combined Julia script to a temporary file
-        with tempfile.NamedTemporaryFile(mode='w', suffix='.jl', delete=False) as temp_file:
-            temp_file.write(julia_script)
-            temp_filename = temp_file.name
+        with tempfile.NamedTemporaryFile(mode='w', suffix='.jl', delete=False) as test_file:
+            test_file.write(test_script)
+            test_filename = test_file.name
 
         try:
             result = subprocess.run(
-                ["julia", temp_filename],
+                ["julia", test_filename],
                 capture_output=True,
                 text=True
             )
@@ -124,7 +119,11 @@ class UnitTest:
 
         finally:
             try:
-                os.remove(temp_filename)
+                os.remove(func_filename)
+            except Exception:
+                pass
+            try:
+                os.remove(test_filename)
             except Exception:
                 pass
 
