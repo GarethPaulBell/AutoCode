@@ -1206,6 +1206,14 @@ try:
 except Exception:
     pass
 
+# Shim: persistence helpers
+try:
+    from src.autocode.persistence import save_db, load_db, DB_PATH as DB_PATH_SHIM
+    if 'DB_PATH' not in globals():
+        DB_PATH = DB_PATH_SHIM
+except Exception:
+    pass
+
 _db = None
 load_db()
 if _db is None:
