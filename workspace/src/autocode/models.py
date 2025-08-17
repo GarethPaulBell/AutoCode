@@ -67,12 +67,23 @@ class UnitTest:
         """
         print(f"Running Test '{self.name}' for Function ID {self.function_id}")
 
+        # Ensure the function code has matching 'function'/'end' pairs so the
+        # test code does not accidentally appear inside the function body.
+        import re
+        func_count = len(re.findall(r'^\s*function\b', function_code, flags=re.M))
+        end_count = len(re.findall(r'^\s*end\b', function_code, flags=re.M))
+        missing_ends = func_count - end_count
+        if missing_ends > 0:
+            function_code = function_code.rstrip() + '\n' + ('end\n' * missing_ends)
+
+        # Combine the function code and test case into one Julia script
         julia_script = f"""
 {function_code}
 
 {self.test_case}
 """
 
+        # Write the combined Julia script to a temporary file
         with tempfile.NamedTemporaryFile(mode='w', suffix='.jl', delete=False) as temp_file:
             temp_file.write(julia_script)
             temp_filename = temp_file.name
