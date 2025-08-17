@@ -664,6 +664,15 @@ def _cosine_similarity(a, b):
         return 0.0
     return dot / (norm_a * norm_b)
 
+# Delegate semantic search to extracted module when available
+try:
+    from src.autocode.semantic import semantic_search_functions as _semantic_search_functions
+    def semantic_search_functions(query: str, top_k: int = 5):
+        return _semantic_search_functions(_db, query, top_k)
+except Exception:
+    # fallback to original implementation in this file (kept for compatibility)
+    pass
+
 def semantic_search_functions(query: str, top_k: int = 5):
     """
     Returns the top_k most semantically similar functions to the query.
