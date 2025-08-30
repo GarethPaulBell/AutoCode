@@ -66,7 +66,8 @@ class UnitTest:
 
     def run_test(self, function_code: str) -> TestResult:
         """
-        Run the unit test by executing the function and test case in Julia.
+        Run the unit test by executing the function and test case in Julia via the
+        persistent Julia runner to avoid spawning a new Julia process per test.
         """
         print(f"Running Test '{self.name}' for Function ID {self.function_id}")
 
@@ -86,22 +87,26 @@ class UnitTest:
             test_file.write(test_script)
             test_filename = test_file.name
 
+        # Convert test path for include
+        test_path_for_include = test_filename.replace('\\', '/')
+
         try:
-            result = subprocess.run(
-                ["julia", test_filename],
-                capture_output=True,
-                text=True
-            )
+            # Use the persistent Julia runner to include both files in a single call.
+            # Compose a single-line Julia expression that includes the function file
+            # and then the test file. Using include("..."); include("...") keeps
+            # the expression as one line so it works with the runner's line-based protocol.
+            expr = f'include("{func_path_for_include}"); include("{test_path_for_include}")'
 
-            stdout = result.stdout.strip()
-            stderr = result.stderr.strip()
+            # Import the runner locally to avoid circular imports at module load time
+            from src.autocode import julia_runner
+            success, output = julia_runner.run_julia(expr, timeout=15.0)
 
-            if result.returncode == 0:
+            if success:
                 status = TestStatusEnum.PASSED
                 actual_result = "Test Passed."
             else:
                 status = TestStatusEnum.FAILED
-                actual_result = stderr if stderr else "Test Failed with unknown error."
+                actual_result = output or "Test failed with unknown error."
                 print(f"Test Failed: {actual_result}")
 
             return TestResult(

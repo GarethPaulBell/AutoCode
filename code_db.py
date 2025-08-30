@@ -260,7 +260,8 @@ class CodeDatabase:
                 f"Created: {self.created_date.isoformat()}, "
                 f"Last Modified: {self.last_modified_date.isoformat()}, "
                 f"Functions: {len(self.functions)}, Modules: {len(self.modules)}, Tags: {len(self.tags)}>")
-
+    
+    # Simple JSON export/import helpers
 def export_function(function_id: str, filepath: str):
     func = _db.functions.get(function_id)
     if not func:
@@ -274,19 +275,19 @@ def export_function(function_id: str, filepath: str):
         "name": func.name,
         "description": func.description,
         "code_snippet": func.code_snippet,
-        "creation_date": func.creation_date.isoformat(),
-        "last_modified_date": func.last_modified_date.isoformat(),
         "modules": func.modules,
         "tags": func.tags,
+        "creation_date": func.creation_date.isoformat(),
+        "last_modified_date": func.last_modified_date.isoformat(),
         "unit_tests": [
             {
                 "test_id": t.test_id,
                 "name": t.name,
                 "description": t.description,
-                "test_case": t.test_case
+                "test_case": t.test_case,
             }
-            for t in func.unit_tests
-        ]
+            for t in getattr(func, "unit_tests", [])
+        ],
     }
     with open(filepath, "w", encoding="utf-8") as f:
         json.dump(data, f, indent=2)
@@ -300,15 +301,15 @@ def import_function(filepath: str):
         description=data["description"],
         code_snippet=data["code_snippet"],
         modules=data.get("modules", []),
-        tags=data.get("tags", [])
+        tags=data.get("tags", []),
     )
     _db.functions[func.function_id] = func
     for t in data.get("unit_tests", []):
         test = UnitTest(
             function_id=func.function_id,
             name=t["name"],
-            description=t["description"],
-            test_case=t["test_case"]
+            description=t.get("description", ""),
+            test_case=t["test_case"],
         )
         func.add_unit_test(test)
     for tag in getattr(func, "tags", []):
@@ -632,6 +633,7 @@ def benchmark_function(function_id: str, input_file: str, iterations: int = 1):
     Benchmark a function by running it with the provided input code N times.
     input_file: path to a file containing Julia code that calls the function (e.g., test inputs).
     Returns a dict with timing and memory stats for each run.
+    This version uses the persistent Julia runner to avoid subprocess startup costs.
     """
     func = _db.functions.get(function_id)
     if not func:
@@ -653,46 +655,41 @@ for i in 1:{iterations}
     println("===BENCHMARK_RUN_END===")
 end
 """
-    # Write to temp file
-    with tempfile.NamedTemporaryFile(mode='w', suffix='.jl', delete=False) as temp_file:
-        temp_file.write(julia_script)
-        temp_filename = temp_file.name
+
+    # Use persistent runner to evaluate the script and capture printed output
+    from src.autocode import julia_runner
+    success, output = julia_runner.run_julia(julia_script, timeout=60.0)
 
     results = []
-    try:
-        proc = subprocess.run(
-            ["julia", temp_filename],
-            capture_output=True,
-            text=True
-        )
-        stdout = proc.stdout
-        # Parse output for @time results
-        import re
-        pattern = r"===BENCHMARK_RUN_START===\s*(.*?)\s*===BENCHMARK_RUN_END==="
-        runs = re.findall(pattern, stdout, re.DOTALL)
-        for run in runs:
-            # @time output is typically: "  0.000012 seconds (2 allocations: 80 bytes)"
-            time_line = None
-            for line in run.splitlines():
-                if "seconds" in line and "allocation" in line:
-                    time_line = line.strip()
-                    break
-            results.append({
-                "raw_output": run.strip(),
-                "time_line": time_line
-            })
-        return {
-            "success": proc.returncode == 0,
-            "runs": results,
-            "stderr": proc.stderr
-        }
-    finally:
-        os.remove(temp_filename)
+    if not success:
+        return {"success": False, "runs": [], "stderr": output}
+
+    stdout = output
+    # Parse output for @time results
+    import re
+    pattern = r"===BENCHMARK_RUN_START===\s*(.*?)\s*===BENCHMARK_RUN_END==="
+    runs = re.findall(pattern, stdout, re.DOTALL)
+    for run in runs:
+        time_line = None
+        for line in run.splitlines():
+            if "seconds" in line and "allocation" in line:
+                time_line = line.strip()
+                break
+        results.append({
+            "raw_output": run.strip(),
+            "time_line": time_line
+        })
+    return {"success": True, "runs": results, "stderr": ""}
+
 
 def property_test_function(function_id: str, num_tests: int = 50, seed: int = 42):
     """
     Generate and run property-based tests for a Julia function using a fixed random seed.
     Returns a list of test results (pass/fail and any error messages).
+    This version uses the persistent Julia runner to avoid spawning Julia processes.
+
+    Additional debug/logging and a fallback subprocess.run are included to help
+    diagnose hangs/timeouts when using the persistent runner.
     """
     func = _db.functions.get(function_id)
     if not func:
@@ -706,36 +703,50 @@ def property_test_function(function_id: str, num_tests: int = 50, seed: int = 42
         print("[WARNING] If these macros are from external packages, you may need to manually add the appropriate 'using ...' statement to your function code.")
         print("[WARNING] Property-based testing will proceed, but may fail if required macros are not imported.")
 
+    # --- Determine the function name to call: prefer parsing it from the code snippet ---
+    try:
+        from src.autocode.julia_parsers import parse_julia_function
+        parsed = parse_julia_function(func.code_snippet)
+        if parsed and parsed.get('name'):
+            call_name = parsed['name']
+        else:
+            call_name = func.name
+    except Exception:
+        call_name = func.name
+
     # --- Argument generation based on signature ---
     sig = getattr(func, "signature", None)
     if not sig or not sig.get("arg_names"):
-        arg_expr = "rand(-1000:1000)"
+        predecl_lines = ["arg = nothing"]
+        assign_lines = ["arg = rand(-1000:1000)"]
         call_args = "arg"
-        arg_decl = "arg = " + arg_expr
         arg_print = '", arg=", arg'
     else:
-        arg_exprs = []
-        call_args = []
+        assign_lines = []
+        call_args_list = []
         arg_prints = []
+        predecl_lines = []
         for i, (name, typ) in enumerate(zip(sig["arg_names"], sig["arg_types"])):
             var = f"arg{i+1}"
-            if typ is None or typ.lower().startswith("int"):
+            if typ is None or (isinstance(typ, str) and typ.lower().startswith("int")):
                 expr = f"{var} = rand(-1000:1000)"
-            elif "matrix" in (typ or "").lower():
+            elif isinstance(typ, str) and "matrix" in typ.lower():
                 expr = f"{var} = rand(-10.0:0.1:10.0, 3, 3)"
-            elif "float" in (typ or "").lower():
+            elif isinstance(typ, str) and "float" in typ.lower():
                 expr = f"{var} = rand() * 2000 - 1000"
-            elif "vector" in (typ or "").lower():
+            elif isinstance(typ, str) and "vector" in typ.lower():
                 expr = f"{var} = rand(-10.0:0.1:10.0, 5)"
             else:
                 expr = f"{var} = rand(-1000:1000)"
-            arg_exprs.append(expr)
-            call_args.append(var)
-            arg_prints.append(f'", {name}=", {var}')
-        arg_decl = "\n            ".join(arg_exprs)
-        call_args = ", ".join(call_args)
+            assign_lines.append(expr)
+            predecl_lines.append(f"{var} = nothing")
+            call_args_list.append(var)
+            arg_prints.append(f'\", {name}=\", {var}')
+        call_args = ", ".join(call_args_list)
         arg_print = "".join(arg_prints)
 
+    predecl_block = "\n        ".join(predecl_lines)
+    assign_block = "\n            ".join(assign_lines)
     julia_script = f"""
 
 using Random
@@ -745,13 +756,14 @@ Random.seed!({seed})
 
 function _property_test_runner()
     for i in 1:{num_tests}
+        {predecl_block}
         try
-            {arg_decl}
-            result = {func.name}({call_args})
+            {assign_block}
+            result = {call_name}({call_args})
             @assert !isnothing(result)
-            println("PROPERTY_TEST_PASS i=", i{arg_print})
+            println("PROPERTY_TEST_PASS i=", i, {arg_print})
         catch err
-            println("PROPERTY_TEST_FAIL i=", i{arg_print}, " error=", err)
+            println("PROPERTY_TEST_FAIL i=", i, {arg_print}, " error=", err)
         end
     end
 
@@ -759,31 +771,74 @@ end
 
 _property_test_runner()
 """
-    # Write to temp file
-    with tempfile.NamedTemporaryFile(mode='w', suffix='.jl', delete=False) as temp_file:
-        temp_file.write(julia_script)
-        temp_filename = temp_file.name
+
+    # --- Debugging: write the script to a temp file for inspection and as a fallback ---
+    with tempfile.NamedTemporaryFile(mode='w', suffix='.jl', delete=False) as tmpf:
+        tmpf.write(julia_script)
+        tmpfile = tmpf.name
+    print(f"[DEBUG] Property test script written to: {tmpfile} (size={os.path.getsize(tmpfile)})")
+    print("[DEBUG] Script preview:\n" + (julia_script[:2000]))
+
+    # Quick sanity-run with subprocess.run to see if the script itself executes outside
+    try:
+        print("[DEBUG] Running quick subprocess sanity-check for the Julia script...")
+        proc = subprocess.run(["julia", tmpfile], capture_output=True, text=True, timeout=10)
+        print(f"[DEBUG] Subprocess returncode={proc.returncode}")
+        if proc.stdout:
+            print("[DEBUG] Subprocess stdout sample:\n", "\n".join(proc.stdout.splitlines()[:10]))
+        if proc.stderr:
+            print("[DEBUG] Subprocess stderr sample:\n", "\n".join(proc.stderr.splitlines()[:10]))
+    except FileNotFoundError:
+        print("[DEBUG] Julia executable not found for subprocess sanity check.")
+    except subprocess.TimeoutExpired:
+        print("[DEBUG] Subprocess sanity-check timed out (script may be long-running).")
+    except Exception as e:
+        print(f"[DEBUG] Subprocess sanity-check raised exception: {e}")
+
+    # Use persistent runner
+    from src.autocode import julia_runner
+    print("[DEBUG] Sending script to persistent Julia runner (timeout=60s)")
+    try:
+        success, output = julia_runner.run_julia(julia_script, timeout=60.0)
+    except Exception as e:
+        print(f"[DEBUG] Persistent runner raised exception: {e}")
+        # Cleanup temp file
+        try:
+            os.remove(tmpfile)
+        except Exception:
+            pass
+        return {"success": False, "results": [], "stderr": str(e)}
+
+    print(f"[DEBUG] Persistent runner returned success={success}; output sample:\n{output.splitlines()[:20]}")
 
     results = []
+    if not success:
+        # On failure include stderr output for diagnosis
+        try:
+            # include last 2000 chars to avoid huge payloads
+            stderr_snip = output[-2000:]
+        except Exception:
+            stderr_snip = output
+        print(f"[DEBUG] Persistent runner failure output:\n{stderr_snip}")
+        try:
+            os.remove(tmpfile)
+        except Exception:
+            pass
+        return {"success": False, "results": [], "stderr": stderr_snip}
+
+    stdout = output
+    for line in stdout.splitlines():
+        if line.startswith("PROPERTY_TEST_PASS"):
+            results.append({"status": "pass", "info": line})
+        elif line.startswith("PROPERTY_TEST_FAIL"):
+            results.append({"status": "fail", "info": line})
+
     try:
-        proc = subprocess.run(
-            ["julia", temp_filename],
-            capture_output=True,
-            text=True
-        )
-        stdout = proc.stdout
-        for line in stdout.splitlines():
-            if line.startswith("PROPERTY_TEST_PASS"):
-                results.append({"status": "pass", "info": line})
-            elif line.startswith("PROPERTY_TEST_FAIL"):
-                results.append({"status": "fail", "info": line})
-        return {
-            "success": proc.returncode == 0,
-            "results": results,
-            "stderr": proc.stderr
-        }
-    finally:
-        os.remove(temp_filename)
+        os.remove(tmpfile)
+    except Exception:
+        pass
+
+    return {"success": True, "results": results, "stderr": ""}
 
 # Models and parsers are imported from src.autocode at module top; no local shims required.
 

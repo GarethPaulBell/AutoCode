@@ -33,6 +33,11 @@ def parse_julia_function(func_text: str) -> Optional[Dict]:
         if m:
             func_name = m.group(1)
             return {"name": func_name, "code": func_text.strip(), "declaration": m.group(0).strip()}
+        # Also support the compact assignment form without the 'function' keyword: `name(args) = expr`
+        m2 = re.search(r'^\s*([a-zA-Z_][a-zA-Z0-9_!]*)\s*\([^)]*\)\s*=\s*', func_text)
+        if m2:
+            func_name = m2.group(1)
+            return {"name": func_name, "code": func_text.strip(), "declaration": m2.group(0).strip()}
         return None
 
     func_match = re.match(r'function\s+([a-zA-Z_][a-zA-Z0-9_!]*)', func_declaration)
