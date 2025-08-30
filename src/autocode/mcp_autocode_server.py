@@ -52,6 +52,9 @@ def _ensure_repo_on_path():
 
 _ensure_repo_on_path()
 
+# Set MCP mode before importing code_db to suppress stdout prints
+os.environ["MCP_AUTOCODE_MODE"] = "1"
+
 import code_db  # Reuse existing database and generation functions
 
 JSONRPC = "2.0"
@@ -240,7 +243,7 @@ class AutoCodeMCPServer:
             self._register(Tool(
                 "list_dependencies",
                 "List dependencies for a function.",
-                {"type": "object", "properties": {"function_id": {"type": "string"}}, "required": ["function_id"]},
+                {"type": "object", "properties": {"function_id": "string"}, "required": ["function_id"]},
                 lambda a: code_db.list_dependencies(a["function_id"])
             ))
         if hasattr(code_db, "visualize_dependencies"):

@@ -39,6 +39,9 @@ from src.autocode.models import (
 # Use persistence module for DB file/location and save/load logic
 from src.autocode.persistence import save_db as persistence_save_db, load_db as persistence_load_db, DB_PATH as DB_PATH
 
+# Detect if running in MCP mode (suppress stdout prints to avoid JSON-RPC pollution)
+MCP_MODE = os.environ.get("MCP_AUTOCODE_MODE", "").lower() in ("1", "true", "yes")
+
 _db = None
 
 def save_db():
@@ -92,7 +95,8 @@ class CodeDatabase:
         mod = Module(module_name)
         self.modules[module_name] = mod
         self.last_modified_date = datetime.datetime.now()
-        print(f"Added Module {mod.module_id}: {module_name}")
+        if not MCP_MODE:
+            print(f"Added Module {mod.module_id}: {module_name}")
         return mod
 
     def add_function(self, name: str, description: str, code_snippet: str, modules: Optional[List[str]] = None, tags: Optional[List[str]] = None) -> Function:
@@ -106,18 +110,21 @@ class CodeDatabase:
             for tag in tags:
                 self.tags.add(tag)
         self.last_modified_date = datetime.datetime.now()
-        print(f"Added Function {func.function_id}: {name} (Modules: {modules}, Tags: {tags})")
+        if not MCP_MODE:
+            print(f"Added Function {func.function_id}: {name} (Modules: {modules}, Tags: {tags})")
         return func
 
     def add_unit_test(self, function_id: str, name: str, description: str, test_case: str) -> Optional[UnitTest]:
         func = self.functions.get(function_id)
         if not func:
-            print(f"Function ID {function_id} not found.")
+            if not MCP_MODE:
+                print(f"Function ID {function_id} not found.")
             return None
         test = UnitTest(function_id, name, description, test_case)
         func.add_unit_test(test)
         self.last_modified_date = datetime.datetime.now()
-        print(f"Added UnitTest {test.test_id} to Function {function_id}")
+        if not MCP_MODE:
+            print(f"Added UnitTest {test.test_id} to Function {function_id}")
         return test
 
     def execute_tests(self, function_id: str = None):

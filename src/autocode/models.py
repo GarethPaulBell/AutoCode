@@ -11,6 +11,9 @@ import subprocess
 from typing import List, Optional
 from enum import Enum
 
+# MCP mode detection
+MCP_MODE = os.getenv('MCP_AUTOCODE_MODE') == '1'
+
 
 class TestStatusEnum(Enum):
     PASSED = "Passed"
@@ -176,12 +179,14 @@ class Function:
 
     def add_unit_test(self, test: UnitTest):
         self.unit_tests.append(test)
-        print(f"Added UnitTest {test.test_id} to Function {self.function_id}")
+        if not MCP_MODE:
+            print(f"Added UnitTest {test.test_id} to Function {self.function_id}")
 
     def modify_code(self, new_code_snippet: str):
         self.code_snippet = new_code_snippet
         self.last_modified_date = datetime.datetime.now()
-        print(f"Function {self.function_id} code modified.")
+        if not MCP_MODE:
+            print(f"Function {self.function_id} code modified.")
 
     def add_module(self, module_name: str):
         if module_name not in self.modules:
