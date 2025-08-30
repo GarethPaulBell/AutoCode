@@ -5,6 +5,15 @@ import cmd
 import os, json, difflib
 import subprocess
 import pkg_resources
+from pathlib import Path
+
+from src.autocode.persistence import (
+    init_db as db_init,
+    status_db as db_status,
+    migrate_db as db_migrate,
+    vacuum_db as db_vacuum,
+    resolve_db as db_resolve,
+)
 
 try:
     import code_db
@@ -78,6 +87,12 @@ def main():
         description="CLI for managing the code database via code_db.py"
     )
     subparsers = parser.add_subparsers(dest="command", required=True)
+
+    # --- Global DB control flags (optional for all commands) ---
+    parser.add_argument("--db-mode", choices=["project", "shared"], help="Select DB mode (per-project or shared)")
+    parser.add_argument("--backend", choices=["pickle", "sqlite"], help="Persistence backend (pickle or sqlite)")
+    parser.add_argument("--db-path", type=str, help="Explicit DB file path (overrides mode/backend resolution)")
+    parser.add_argument("--project-root", type=str, help="Project root for project DB resolution")
 
     # add-function
     add_func = subparsers.add_parser("add-function", help="Add a new function to the database.")
@@ -201,6 +216,18 @@ def main():
 
     # coverage-report
     coverage = subparsers.add_parser("coverage-report", help="Show test coverage for all functions.")
+
+    # --- DB management commands ---
+    p_init = subparsers.add_parser("init-db", help="Initialize the AutoCode DB (project/shared)")
+    p_init.add_argument("--overwrite", action="store_true", help="Overwrite if DB already exists")
+
+    p_status = subparsers.add_parser("status-db", help="Show DB status and metadata")
+
+    p_migrate = subparsers.add_parser("migrate-db", help="Migrate DB backend (pickle <-> sqlite)")
+    p_migrate.add_argument("--to", required=True, choices=["pickle", "sqlite"], help="Target backend")
+    p_migrate.add_argument("--overwrite", action="store_true", help="Allow overwrite of destination DB file if exists")
+
+    p_vacuum = subparsers.add_parser("vacuum-db", help="Compact/optimize the DB file")
 
     # shell
     shell_parser = subparsers.add_parser("shell", help="Launch interactive shell for code_db.")
@@ -370,7 +397,45 @@ def main():
         def do_benchmark_function(self, arg): "Time and memory micro-benchmark for a function."; self.default("benchmark-function " + arg)
         def do_property_test(self, arg): "Generate and run property-based tests (Hypothesis/QuickCheck style)."; self.default("property-test " + arg)
 
+    def _db_kwargs(args):
+        return {
+            "mode": getattr(args, "db_mode", None),
+            "backend": getattr(args, "backend", None),
+            "explicit_path": Path(args.db_path) if getattr(args, "db_path", None) else None,
+            "project_root": Path(args.project_root) if getattr(args, "project_root", None) else None,
+        }
+
     def main_dispatch(args):
+        # Handle DB administration commands first
+        if args.command == "init-db":
+            try:
+                path = db_init(overwrite=args.overwrite, **_db_kwargs(args))
+                print(f"Initialized DB at: {path}")
+            except Exception as e:
+                print(f"Error initializing DB: {e}")
+            return
+        elif args.command == "status-db":
+            try:
+                info = db_status(**_db_kwargs(args))
+                for k, v in info.items():
+                    print(f"{k}: {v}")
+            except Exception as e:
+                print(f"Error reading status: {e}")
+            return
+        elif args.command == "migrate-db":
+            try:
+                dest = db_migrate(args.to, overwrite=args.overwrite, **_db_kwargs(args))
+                print(f"Migrated DB to: {dest}")
+            except Exception as e:
+                print(f"Error migrating DB: {e}")
+            return
+        elif args.command == "vacuum-db":
+            try:
+                db_vacuum(**_db_kwargs(args))
+                print("Vacuum complete.")
+            except Exception as e:
+                print(f"Error vacuuming DB: {e}")
+            return
         if args.command == "add-function":
             code = read_file(args.code_file)
             modules = parse_modules_arg(args.modules)
