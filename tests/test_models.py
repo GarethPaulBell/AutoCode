@@ -2,8 +2,8 @@
 
 import pytest
 from src.autocode.models import (
-    TestResult,
-    TestStatusEnum,
+    TestResult as TestResultModel,  # Rename to avoid pytest collection
+    TestStatusEnum as TestStatus,   # Rename to avoid pytest collection
     Modification,
     UnitTest,
     Function,
@@ -13,16 +13,16 @@ from src.autocode.models import (
 
 def test_test_result_creation():
     """Test TestResult class initialization and representation."""
-    result = TestResult(
+    result = TestResultModel(
         test_id="test-123",
         function_id="func-456",
         actual_result="Test passed",
-        status=TestStatusEnum.PASSED
+        status=TestStatus.PASSED
     )
     assert result.test_id == "test-123"
     assert result.function_id == "func-456"
     assert result.actual_result == "Test passed"
-    assert result.status == TestStatusEnum.PASSED
+    assert result.status == TestStatus.PASSED
     assert result.result_id is not None
     assert result.execution_date is not None
 
@@ -211,7 +211,7 @@ def test_unit_test_run_test_cleanup(tmp_path):
 
     # Verify result
     assert result is not None
-    assert result.status in [TestStatusEnum.PASSED, TestStatusEnum.FAILED]
+    assert result.status in [TestStatus.PASSED, TestStatus.FAILED]
     assert result.test_id == test.test_id
     assert result.function_id == func.function_id
 
