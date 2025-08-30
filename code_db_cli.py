@@ -12,6 +12,7 @@ from src.autocode.persistence import (
     status_db as db_status,
     migrate_db as db_migrate,
     vacuum_db as db_vacuum,
+    unlock_db as db_unlock,
     resolve_db as db_resolve,
 )
 
@@ -229,6 +230,9 @@ def main():
 
     p_vacuum = subparsers.add_parser("vacuum-db", help="Compact/optimize the DB file")
 
+    p_unlock = subparsers.add_parser("unlock-db", help="Remove a stale DB lock file (use --force to override staleness check)")
+    p_unlock.add_argument("--force", action="store_true", help="Force removal even if the lock isn't considered stale")
+
     # shell
     shell_parser = subparsers.add_parser("shell", help="Launch interactive shell for code_db.")
 
@@ -435,6 +439,15 @@ def main():
                 print("Vacuum complete.")
             except Exception as e:
                 print(f"Error vacuuming DB: {e}")
+            return
+        elif args.command == "unlock-db":
+            try:
+                report = db_unlock(force=args.force, **_db_kwargs(args))
+                print("Unlock report:")
+                for k, v in report.items():
+                    print(f"  {k}: {v}")
+            except Exception as e:
+                print(f"Error unlocking DB: {e}")
             return
         if args.command == "add-function":
             code = read_file(args.code_file)

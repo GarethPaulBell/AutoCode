@@ -24,7 +24,7 @@ DEFAULT_PICKLE_EXT = ".pkl"
 DEFAULT_SQLITE_EXT = ".sqlite"
 
 DEFAULT_MODE: Literal["project", "shared"] = "project"
-DEFAULT_BACKEND: Literal["pickle", "sqlite"] = "pickle"
+DEFAULT_BACKEND: Literal["pickle", "sqlite"] = "sqlite"
 
 # Env overrides
 ENV_DB_PATH = "AUTOCODE_DB"  # explicit path to DB file
@@ -32,6 +32,7 @@ ENV_DB_MODE = "AUTOCODE_DB_MODE"  # project | shared
 ENV_BACKEND = "AUTOCODE_BACKEND"  # pickle | sqlite
 ENV_PROJECT_ROOT = "AUTOCODE_PROJECT_ROOT"  # explicit project root
 ENV_SHARED_DIR = "AUTOCODE_SHARED_DIR"  # explicit shared root dir
+ENV_LOCK_STALE_S = "AUTOCODE_LOCK_STALE_S"  # seconds before considering a lock stale
 
 # Back-compat constant (used by code_db.py import). Keep as default filename.
 DB_PATH = f"{DEFAULT_DB_BASENAME}{DEFAULT_PICKLE_EXT}"
@@ -95,11 +96,22 @@ def _save_config(mode: str, data: dict, project_root: Optional[Path] = None) -> 
 
 
 class FileLock:
-    """Simple cross-process lock using exclusive lockfile create."""
+    """Simple cross-process lock using exclusive lockfile create.
 
-    def __init__(self, path: Path, timeout_s: float = 10.0):
+    Adds basic stale lock cleanup by age. Set AUTOCODE_LOCK_STALE_S to control age threshold.
+    """
+
+    def __init__(self, path: Path, timeout_s: float = 10.0, stale_age_s: Optional[float] = None):
         self.path = path
         self.timeout_s = timeout_s
+        # Default stale age: 10 minutes if not provided
+        if stale_age_s is None:
+            try:
+                stale_env = float(os.environ.get(ENV_LOCK_STALE_S, "600"))
+            except Exception:
+                stale_env = 600.0
+            stale_age_s = stale_env
+        self.stale_age_s = stale_age_s
         self._fd: Optional[int] = None
 
     def __enter__(self):
@@ -111,6 +123,25 @@ class FileLock:
                 os.write(self._fd, str(os.getpid()).encode("utf-8"))
                 break
             except FileExistsError:
+                # If lock file exists for longer than stale_age_s, consider it stale and remove
+                try:
+                    if self.stale_age_s is not None and self.path.exists():
+                        mtime = self.path.stat().st_mtime
+                        if (time.time() - mtime) > self.stale_age_s:
+                            # Best-effort read PID for logging/debugging
+                            try:
+                                pid_txt = self.path.read_text(encoding="utf-8", errors="ignore").strip()
+                            except Exception:
+                                pid_txt = ""
+                            try:
+                                self.path.unlink()
+                            except Exception:
+                                pass
+                            # Retry immediately after removing stale lock
+                            continue
+                except Exception:
+                    # Ignore any errors during stale lock inspection
+                    pass
                 if time.time() - start > self.timeout_s:
                     raise TimeoutError(f"Timeout acquiring DB lock: {self.path}")
                 time.sleep(0.05)
@@ -391,6 +422,19 @@ def status_db(project_root: Optional[Path] = None,
         "exists": db_path.exists(),
         "size_bytes": db_path.stat().st_size if db_path.exists() else 0,
     }
+    # Lock file diagnostics
+    lock_path = db_path.with_suffix(db_path.suffix + ".lock")
+    info["lock_file"] = str(lock_path)
+    info["lock_exists"] = lock_path.exists()
+    if lock_path.exists():
+        try:
+            info["lock_age_s"] = max(0.0, time.time() - lock_path.stat().st_mtime)
+        except Exception:
+            info["lock_age_s"] = None
+        try:
+            info["lock_pid"] = lock_path.read_text(encoding="utf-8", errors="ignore").strip()
+        except Exception:
+            info["lock_pid"] = None
     if db_path.exists():
         try:
             db = load_db(project_root, active_mode, active_backend, db_path)
@@ -462,4 +506,45 @@ def migrate_db(to_backend: Literal["pickle", "sqlite"],
         pass
     _save_config(active_mode, cfg, project_root)
     return dest_path
+
+
+def unlock_db(project_root: Optional[Path] = None,
+              mode: Optional[Literal["project", "shared"]] = None,
+              backend: Optional[Literal["pickle", "sqlite"]] = None,
+              explicit_path: Optional[Path] = None,
+              force: bool = False) -> dict:
+    """Attempt to remove a stale DB lock. Returns a report dict.
+
+    If force is False, only removes the lock if older than stale_age_s.
+    """
+    db_path, active_mode, active_backend = resolve_db(mode, backend, explicit_path, project_root)
+    lock_path = db_path.with_suffix(db_path.suffix + ".lock")
+    report = {
+        "db_path": str(db_path),
+        "lock_file": str(lock_path),
+        "existed": lock_path.exists(),
+        "removed": False,
+        "reason": None,
+    }
+    if not lock_path.exists():
+        return report
+    try:
+        age = time.time() - lock_path.stat().st_mtime
+    except Exception:
+        age = None
+    # Determine stale threshold consistent with FileLock
+    try:
+        stale_age_s = float(os.environ.get(ENV_LOCK_STALE_S, "600"))
+    except Exception:
+        stale_age_s = 600.0
+    if force or (age is not None and age > stale_age_s):
+        try:
+            lock_path.unlink()
+            report["removed"] = True
+            report["reason"] = "force" if force else f"stale>{stale_age_s}s"
+        except Exception as e:
+            report["reason"] = f"failed: {e}"
+    else:
+        report["reason"] = "not-stale"
+    return report
 
