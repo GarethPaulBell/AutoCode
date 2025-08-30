@@ -561,9 +561,17 @@ def main():
                     generated.code,
                     modules
                 )
+                # Automatically add the generated test case
+                test_id = code_db.add_test(
+                    func_id,
+                    generated.test_name,
+                    generated.test_description,
+                    generated.tests
+                )
                 print(f"Generated and added function '{generated.function_name}' with ID: {func_id}")
                 print("Function code:\n", generated.code)
-                print("Test case:\n", generated.tests)
+                print(f"Test case added with ID: {test_id}")
+                print("Test code:\n", generated.tests)
                 if modules:
                     print(f"Associated with module(s): {', '.join(modules)}")
             except Exception as e:
