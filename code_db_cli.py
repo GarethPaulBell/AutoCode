@@ -7,6 +7,12 @@ import subprocess
 import pkg_resources
 from pathlib import Path
 
+# Ensure stdout uses UTF-8 encoding for proper output handling
+try:
+    sys.stdout.reconfigure(encoding="utf-8")
+except Exception:
+    pass  # Ignore if reconfigure is not available
+
 from src.autocode.persistence import (
     init_db as db_init,
     status_db as db_status,

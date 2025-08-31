@@ -17,7 +17,14 @@ import base64
 import time
 import tempfile
 import os
+import sys
 from typing import Optional, Tuple
+
+# Ensure stdout uses UTF-8 encoding to handle Julia output properly
+try:
+    sys.stdout.reconfigure(encoding="utf-8")
+except Exception:
+    pass  # Ignore if reconfigure is not available
 
 RESULT_MARKER = "<<<RESULT>>>"
 ERROR_MARKER = "<<<ERROR>>>"

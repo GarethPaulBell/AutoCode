@@ -1,13 +1,27 @@
+"""AutoCode: Julia function database and MCP server.
+
+A system for storing, generating, and testing Julia functions with MCP integration.
+"""
+from __future__ import annotations
+
+import os
+import sys
+from typing import List, Optional, Dict
+
+# Ensure stdout uses UTF-8 encoding for proper output handling
+try:
+    sys.stdout.reconfigure(encoding="utf-8")
+except Exception:
+    pass  # Ignore if reconfigure is not available
+
 import subprocess
 import tempfile
-import os
 import datetime
 import uuid
 import pickle
 import json
 import math
 import re
-from typing import Callable, Dict, List, Optional
 from enum import Enum
 from pydantic import BaseModel, Field
 from colorama import Fore, Style, init

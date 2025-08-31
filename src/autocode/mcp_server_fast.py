@@ -18,7 +18,14 @@ import os
 import json
 import sys
 from typing import Optional, List, Dict, Any, Generator
+from types import SimpleNamespace
 from mcp.types import TextContent
+
+# Ensure stdout uses UTF-8 encoding for proper output handling
+try:
+    sys.stdout.reconfigure(encoding="utf-8")
+except Exception:
+    pass  # Ignore if reconfigure is not available
 
 
 
@@ -73,19 +80,83 @@ except ImportError as e:
 # ---------- Helpers ----------
 
 def _ok(data: Any = None) -> Dict[str, Any]:
-    return {"ok": True, "data": data}
+    # Convert Pydantic models to dicts for JSON serialization
+    if data is not None:
+        data = _convert_to_serializable(data)
+    # Ensure the response is a plain dict with string keys
+    response = {"ok": True}
+    if data is not None:
+        response["data"] = data
+    return response
 
 def _err(msg: str, **extra) -> Dict[str, Any]:
-    return {"ok": False, "error": msg, **extra}
+    # Convert any Pydantic models in extra to dicts
+    extra = {k: _convert_to_serializable(v) for k, v in extra.items()}
+    # Ensure the response is a plain dict
+    response = {"ok": False, "error": str(msg)}
+    response.update(extra)
+    return response
 
-def _stream_lines(text: str) -> Generator[TextContent, None, None]:
-    # Yield line-by-line to demonstrate streaming
+def _convert_to_serializable(obj: Any) -> Any:
+    """Convert Pydantic models and other non-serializable objects to JSON-serializable types."""
+    if hasattr(obj, 'model_dump'):  # Pydantic v2
+        return obj.model_dump()
+    elif hasattr(obj, 'dict'):  # Pydantic v1
+        return obj.dict()
+    elif isinstance(obj, dict):
+        return {k: _convert_to_serializable(v) for k, v in obj.items()}
+    elif isinstance(obj, list):
+        return [_convert_to_serializable(item) for item in obj]
+    elif isinstance(obj, tuple):
+        return [_convert_to_serializable(item) for item in obj]
+    else:
+        return obj
+
+def _stream_lines(text: str) -> Generator[Dict[str, Any], None, None]:
+    # Yield line-by-line as plain dicts instead of TextContent objects
     for line in text.splitlines():
-        yield TextContent(line)
+        yield {"type": "text", "text": line}
 
 
 # ---------- Server ----------
 app = FastMCP("autocode-mcp")
+
+# Add lightweight logging wrapper so tool calls show inputs, yields and return values.
+import logging, types, functools
+logging.basicConfig(level=logging.DEBUG)
+_logger = logging.getLogger(__name__)
+
+_orig_tool = app.tool
+
+def _tool_with_logging(*dargs, **dkwargs):
+    orig_decorator = _orig_tool(*dargs, **dkwargs)
+    def decorator(fn):
+        @functools.wraps(fn)
+        def wrapped(*args, **kwargs):
+            _logger.debug("TOOL CALL %s args=%r kwargs=%r", fn.__name__, args, kwargs)
+            try:
+                res = fn(*args, **kwargs)
+                if isinstance(res, types.GeneratorType):
+                    def gen():
+                        try:
+                            while True:
+                                item = next(res)
+                                _logger.debug("TOOL %s YIELD %r", fn.__name__, item)
+                                yield item
+                        except StopIteration as e:
+                            _logger.debug("TOOL %s RETURN %r", fn.__name__, e.value)
+                            return e.value
+                    return gen()
+                else:
+                    _logger.debug("TOOL %s RETURN %r", fn.__name__, res)
+                    return res
+            except Exception:
+                _logger.exception("TOOL %s EXCEPTION", fn.__name__)
+                raise
+        return orig_decorator(wrapped)
+    return decorator
+
+app.tool = _tool_with_logging
 
 # ---------- DB admin (mirrors CLI) ----------
 
@@ -245,20 +316,20 @@ def add_test(function_id: str,
 
 
 @app.tool()
-def run_tests(function_id: Optional[str] = None) -> Generator[TextContent, None, Dict[str, Any]]:
+def run_tests(function_id: Optional[str] = None) -> Generator[Dict[str, Any], None, Dict[str, Any]]:
     """
     Run tests; streams each test result line-by-line and returns the structured list.
     """
     try:
         results = code_db.run_tests(function_id) if function_id else code_db.run_tests()
     except Exception as e:
-        yield TextContent(f"error: {e}")
+        yield {"type": "text", "text": f"error: {e}"}
         return _err(f"{e}")
 
     # Stream human-friendly lines
     for r in results:
         line = f"Test {r['test_id']} | {r['status']}: {r.get('output','')[:200]}"
-        yield TextContent(line)
+        yield {"type": "text", "text": line}
     return _ok(results)
 
 
@@ -276,13 +347,35 @@ def get_test_results(function_id: Optional[str] = None) -> Dict[str, Any]:
 
 @app.tool()
 def generate_function(description: str,
-                      module: Optional[str] = None) -> Generator[TextContent, None, Dict[str, Any]]:
+                      module: Optional[str] = None) -> Generator[Dict[str, Any], None, Dict[str, Any]]:
     """
     Use AI to generate a Julia function + test, add both to DB, and stream the code.
     """
     try:
+        # Check if generate_julia_function is available
+        if code_db.generate_julia_function is None:
+            yield {"type": "text", "text": "error: AI function generation is not available (ell library not installed)"}
+            return _err("AI function generation is not available (ell library not installed)")
+            
         result = code_db.generate_julia_function(description)
-        gen = result.parsed
+        
+        # Handle the result based on its structure
+        if hasattr(result, 'parsed'):
+            gen = result.parsed
+            # If it's a Pydantic model, convert to a simple namespace
+            if hasattr(gen, 'model_dump') or hasattr(gen, 'dict'):
+                gen_dict = gen.model_dump() if hasattr(gen, 'model_dump') else gen.dict()
+                gen = SimpleNamespace(**gen_dict)
+            elif hasattr(gen, '__dict__'):
+                # Convert any object with __dict__ to SimpleNamespace
+                gen = SimpleNamespace(**gen.__dict__)
+        else:
+            # If result is the parsed data directly
+            if isinstance(result, dict):
+                gen = SimpleNamespace(**result)
+            else:
+                gen = result
+            
         modules = [module] if module else None
 
         fid = code_db.add_function(gen.function_name, gen.short_description, gen.code, modules)
@@ -290,7 +383,7 @@ def generate_function(description: str,
 
         # Stream code for preview
         yield from _stream_lines(gen.code)
-        yield TextContent("\n---\n# Test\n")
+        yield {"type": "text", "text": "\n---\n# Test\n"}
         yield from _stream_lines(gen.tests)
 
         return _ok({
@@ -300,8 +393,12 @@ def generate_function(description: str,
             "module": module,
         })
     except Exception as e:
-        yield TextContent(f"error: {e}")
-        return _err(f"{e}")
+        # Clean up any complex objects from the exception context
+        import traceback
+        error_msg = f"{e}"
+        # Don't include any complex objects in the error response
+        yield {"type": "text", "text": f"error: {error_msg}"}
+        return _err(error_msg)
 
 
 @app.tool()
@@ -341,6 +438,9 @@ def search_functions(query: str,
 
 @app.tool()
 def list_modules() -> Dict[str, Any]:
+    """
+    List all modules.
+    """
     try:
         mods = code_db.list_modules()
         return _ok(mods)
@@ -350,6 +450,9 @@ def list_modules() -> Dict[str, Any]:
 
 @app.tool()
 def add_function_to_module(function_id: str, module: str) -> Dict[str, Any]:
+    """
+    Add a function to a module.
+    """
     try:
         code_db.add_function_to_module(function_id, module)
         return _ok({"function_id": function_id, "module": module})
@@ -359,6 +462,9 @@ def add_function_to_module(function_id: str, module: str) -> Dict[str, Any]:
 
 @app.tool()
 def export_function(function_id: str, file: str) -> Dict[str, Any]:
+    """
+    Export a function (with tests) to a JSON file.
+    """
     try:
         code_db.export_function(function_id, file)
         return _ok({"file": file})
@@ -368,6 +474,9 @@ def export_function(function_id: str, file: str) -> Dict[str, Any]:
 
 @app.tool()
 def import_function(file: str) -> Dict[str, Any]:
+    """
+    Import a function (with tests) from a JSON file.
+    """
     try:
         new_id = code_db.import_function(file)
         return _ok({"id": new_id})
@@ -377,6 +486,9 @@ def import_function(file: str) -> Dict[str, Any]:
 
 @app.tool()
 def export_module(module: str, file: str) -> Dict[str, Any]:
+    """
+    Export a module (all functions) to a JSON file.
+    """
     try:
         code_db.export_module(module, file)
         return _ok({"module": module, "file": file})
@@ -386,6 +498,9 @@ def export_module(module: str, file: str) -> Dict[str, Any]:
 
 @app.tool()
 def import_module(file: str) -> Dict[str, Any]:
+    """
+    Import a module (all functions) from a JSON file.
+    """
     try:
         ids = code_db.import_module(file)
         return _ok({"num_functions": len(ids), "ids": ids})
@@ -397,6 +512,9 @@ def import_module(file: str) -> Dict[str, Any]:
 def import_julia_file(file: str,
                       module: Optional[str] = None,
                       generate_tests: bool = False) -> Dict[str, Any]:
+    """
+    Import functions from a Julia (.jl) file.
+    """
     try:
         ids = code_db.import_julia_file(file, module_name=module, generate_tests=generate_tests)
         return _ok({"num_functions": len(ids), "ids": ids})
@@ -406,6 +524,9 @@ def import_julia_file(file: str,
 
 @app.tool()
 def generate_module_file(module: str, file: str, with_tests: bool = False) -> Dict[str, Any]:
+    """
+    Output all functions in a module as a single Julia file, optionally with tests.
+    """
     try:
         code_db.generate_module_file(module, file, with_tests=with_tests)
         return _ok({"file": file})
@@ -415,6 +536,9 @@ def generate_module_file(module: str, file: str, with_tests: bool = False) -> Di
 
 @app.tool()
 def add_dependency(function_id: str, depends_on_id: str) -> Dict[str, Any]:
+    """
+    Add a dependency from one function to another.
+    """
     try:
         code_db.add_dependency(function_id, depends_on_id)
         return _ok({"function_id": function_id, "depends_on_id": depends_on_id})
@@ -424,6 +548,9 @@ def add_dependency(function_id: str, depends_on_id: str) -> Dict[str, Any]:
 
 @app.tool()
 def list_dependencies(function_id: str) -> Dict[str, Any]:
+    """
+    List all dependencies for a function.
+    """
     try:
         deps = code_db.list_dependencies(function_id) or []
         return _ok(deps)
@@ -433,6 +560,9 @@ def list_dependencies(function_id: str) -> Dict[str, Any]:
 
 @app.tool()
 def visualize_dependencies(file: str) -> Dict[str, Any]:
+    """
+    Output a DOT/Graphviz file visualizing function dependencies.
+    """
     try:
         code_db.visualize_dependencies(file)
         return _ok({"file": file})
@@ -442,6 +572,9 @@ def visualize_dependencies(file: str) -> Dict[str, Any]:
 
 @app.tool()
 def coverage_report() -> Dict[str, Any]:
+    """
+    Show test coverage for all functions.
+    """
     try:
         report = code_db.get_coverage_report() or []
         return _ok(report)
@@ -451,6 +584,9 @@ def coverage_report() -> Dict[str, Any]:
 
 @app.tool()
 def list_tags() -> Dict[str, Any]:
+    """
+    List all tags in the database.
+    """
     try:
         tags = code_db.list_tags() or []
         return _ok(tags)
@@ -460,6 +596,9 @@ def list_tags() -> Dict[str, Any]:
 
 @app.tool()
 def add_tag(function_id: str, tag: str) -> Dict[str, Any]:
+    """
+    Add a tag to a function.
+    """
     try:
         code_db.add_tag(function_id, tag)
         return _ok({"function_id": function_id, "tag": tag})
@@ -469,6 +608,9 @@ def add_tag(function_id: str, tag: str) -> Dict[str, Any]:
 
 @app.tool()
 def semantic_search(query: str, top_k: int = 5) -> Dict[str, Any]:
+    """
+    Semantic search for functions by meaning, not just keywords.
+    """
     try:
         res = code_db.semantic_search_functions(query, top_k=top_k) or []
         return _ok(res)
@@ -478,6 +620,9 @@ def semantic_search(query: str, top_k: int = 5) -> Dict[str, Any]:
 
 @app.tool()
 def benchmark_function(function_id: str, input_file: str, iterations: int = 1) -> Dict[str, Any]:
+    """
+    Time and memory micro-benchmark for a function.
+    """
     try:
         result = code_db.benchmark_function(function_id, input_file, iterations)
         return _ok(result)
@@ -487,6 +632,9 @@ def benchmark_function(function_id: str, input_file: str, iterations: int = 1) -
 
 @app.tool()
 def property_test(function_id: str, num_tests: int = 50, seed: int = 42) -> Dict[str, Any]:
+    """
+    Generate and run property-based tests (Hypothesis/QuickCheck style).
+    """
     try:
         result = code_db.property_test_function(function_id, num_tests, seed)
         return _ok(result)
