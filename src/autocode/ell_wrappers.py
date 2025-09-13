@@ -120,13 +120,26 @@ if HAVE_ELL:
 
     modify_julia_function = _wrap_complex(_modify_impl, model="gpt-5", response_format=JuliaCodePackage)
 
-    def _write_test_case_impl(function_name: str) -> str:
+    def _write_test_case_impl(function_code: str, signature: str, docstring: str, function_name: str) -> str:
         prompt = (
-            f"Write a Julia test file for the function `{function_name}`. "
-            "Output ONLY valid Julia code. "
-            "Do NOT include any markdown, triple backticks, comments, or explanations. "
-            "Do NOT include the function definition, only the test code. "
-            "Begin with 'using Test'."
+            f"You are an expert Julia developer and test writer. "
+            f"Given the following function, its signature, and docstring, generate a Julia test file that thoroughly tests the function.\n"
+            f"Function name: {function_name}\n"
+            f"Signature: {signature}\n"
+            f"Docstring: {docstring}\n"
+            f"Full code:\n{function_code}\n"
+            "Requirements:\n"
+            "- Output ONLY valid Julia code.\n"
+            "- Do NOT include any markdown, triple backticks, comments, or explanations.\n"
+            "- Do NOT include the function definition, only the test code.\n"
+            "- Begin with 'using Test'.\n"
+            "- All tests must match the function's signature exactly (argument names, types, and return type).\n"
+            "- Use information from the docstring and code to generate meaningful, context-aware tests.\n"
+            "- Include edge cases and boundary values where appropriate.\n"
+            "- Do not generate generic or mismatched tests.\n"
+            "- If the function is mathematical, include property-based or invariant tests if possible.\n"
+            "- If the function has constraints or special cases in the docstring, test those explicitly.\n"
+            "- If unsure, ask for clarification rather than guessing.\n"
         )
         return prompt
 

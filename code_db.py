@@ -434,7 +434,11 @@ def export_function(function_id: str, filepath: str):
             "traceback": traceback.format_exc()
         }
 
-def import_function(filepath: str):
+def import_function(filepath: str, override: bool = False):
+    """
+    Import a function from a JSON file. If a function with the same name (case-insensitive, trimmed) exists, abort unless override is True.
+    If override is True, skip importing the colliding function and report it.
+    """
     try:
         if not os.path.exists(filepath):
             return {
@@ -445,15 +449,22 @@ def import_function(filepath: str):
             }
         with open(filepath, "r", encoding="utf-8") as f:
             data = json.load(f)
-        # Check for collision by name
+        imported_name = data["name"].strip().lower()
         for f in _db.functions.values():
-            if f.name == data["name"]:
-                return {
-                    "success": False,
-                    "error_type": "FunctionNameCollision",
-                    "message": f"A function named '{data['name']}' already exists.",
-                    "suggested_action": "Rename the function before importing or delete the existing one."
-                }
+            if f.name.strip().lower() == imported_name:
+                if not override:
+                    return {
+                        "success": False,
+                        "error_type": "FunctionNameCollision",
+                        "message": f"A function named '{data['name']}' already exists (case-insensitive, trimmed).",
+                        "suggested_action": "Rename the function before importing, delete the existing one, or use override=True to skip importing this function."
+                    }
+                else:
+                    return {
+                        "success": True,
+                        "message": f"Skipped import: function named '{data['name']}' already exists. No overwrite performed.",
+                        "skipped": True
+                    }
         func = Function(
             name=data["name"],
             description=data["description"],
@@ -649,7 +660,14 @@ def import_julia_file(filepath: str, module_name: str = None, generate_tests: bo
         # Generate basic test if requested
         if generate_tests:
             try:
-                test_code = write_test_case(func_data['name'])
+                # Extract function code, signature, and docstring for context-aware test generation
+                function_code = func_data['code']
+                parsed = parse_julia_function(function_code)
+                signature = parsed['declaration'] if parsed and 'declaration' in parsed else ''
+                # Extract docstring from code lines
+                code_lines = function_code.strip().split('\n')
+                docstring, _ = extract_julia_docstring(code_lines, 0)
+                test_code = write_test_case(function_code, signature, docstring, func_data['name'])
                 if test_code:
                     test = UnitTest(
                         function_id=func.function_id,
@@ -715,69 +733,86 @@ def search_functions(query: str, created_after: str = None, modified_after: str 
             })
     return results
 
-def _get_embedding(text):
-    # You can replace this with your own embedding model or API
-    if HAVE_OPENAI:
-        # Detect OpenAI API version
-        openai_version = getattr(openai, "__version__", "0.0.0")
-        major_version = int(openai_version.split(".")[0])
-        if major_version >= 1:
-            # openai>=1.0.0
-            # https://github.com/openai/openai-python/blob/main/README.md#embeddings
-            resp = openai.embeddings.create(input=[text], model="text-embedding-ada-002")
-            return resp.data[0].embedding
-        else:
-            # openai<1.0.0
-            resp = openai.Embedding.create(input=[text], model="text-embedding-ada-002")
-            return resp["data"][0]["embedding"]
-    else:
-        # Fallback: hash-based pseudo-embedding (for demo only, not real semantic search)
-        import hashlib
-        h = hashlib.sha256(text.encode("utf-8")).digest()
-        return [b/255.0 for b in h[:64]]
-
-def _cosine_similarity(a, b):
-    # Compute cosine similarity between two vectors
-    dot = sum(x*y for x, y in zip(a, b))
-    norm_a = math.sqrt(sum(x*x for x in a))
-    norm_b = math.sqrt(sum(x*x for x in b))
-    if norm_a == 0 or norm_b == 0:
-        return 0.0
-    return dot / (norm_a * norm_b)
-
-# Delegate semantic search to extracted module when available
-try:
-    from src.autocode.semantic import semantic_search_functions as _semantic_search_functions
-    def semantic_search_functions(query: str, top_k: int = 5):
-        return _semantic_search_functions(_db, query, top_k)
-except Exception:
-    # fallback to original implementation in this file (kept for compatibility)
-    pass
-
-def semantic_search_functions(query: str, top_k: int = 5):
+def import_module(filepath: str, override: bool = False):
     """
-    Returns the top_k most semantically similar functions to the query.
+    Import a module from a JSON file. If a module or any function with the same name (case-insensitive, trimmed) exists, abort unless override is True.
+    If override is True, skip importing colliding module/functions and report them.
     """
-    query_emb = _get_embedding(query)
-    scored = []
-    for func in _db.functions.values():
-        # Combine name, description, and code for embedding
-        text = f"{func.name}\n{func.description}\n{func.code_snippet}"
-        func_emb = _get_embedding(text)
-        score = _cosine_similarity(query_emb, func_emb)
-        scored.append((score, func))
-    scored.sort(reverse=True, key=lambda x: x[0])
-    results = []
-    for score, func in scored[:top_k]:
-        results.append({
-            "id": func.function_id,
-            "name": func.name,
-            "description": func.description,
-            "modules": getattr(func, "modules", []),
-            "tags": getattr(func, "tags", []),
-            "similarity": score
-        })
-    return results
+    try:
+        if not os.path.exists(filepath):
+            return {
+                "success": False,
+                "error_type": "FileNotFound",
+                "message": f"File '{filepath}' not found.",
+                "suggested_action": "Check the file path or export a module first."
+            }
+        with open(filepath, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        module_name = data["module_name"]
+        norm_mod_name = module_name.strip().lower()
+        existing_mods = {m.strip().lower() for m in _db.modules.keys()}
+        if norm_mod_name in existing_mods:
+            if not override:
+                return {
+                    "success": False,
+                    "error_type": "ModuleNameCollision",
+                    "message": f"A module named '{module_name}' already exists (case-insensitive, trimmed).",
+                    "suggested_action": "Rename the module before importing, delete the existing one, or use override=True to skip importing this module."
+                }
+            else:
+                return {
+                    "success": True,
+                    "message": f"Skipped import: module named '{module_name}' already exists. No overwrite performed.",
+                    "skipped": True
+                }
+        _db.add_module(module_name)
+        new_func_ids = []
+        collisions = []
+        existing_func_names = {f.name.strip().lower() for f in _db.functions.values()}
+        for func_data in data.get("functions", []):
+            norm_func_name = func_data["name"].strip().lower()
+            if norm_func_name in existing_func_names:
+                collisions.append(func_data["name"])
+                continue
+            func = Function(
+                name=func_data["name"],
+                description=func_data["description"],
+                code_snippet=func_data["code_snippet"],
+                modules=func_data.get("modules", []),
+                tags=func_data.get("tags", [])
+            )
+            _db.functions[func.function_id] = func
+            for t in func_data.get("unit_tests", []):
+                test = UnitTest(
+                    function_id=func.function_id,
+                    name=t["name"],
+                    description=t["description"],
+                    test_case=t["test_case"]
+                )
+                func.add_unit_test(test)
+            for tag in getattr(func, "tags", []):
+                _db.tags.add(tag)
+            new_func_ids.append(func.function_id)
+        _db.last_modified_date = datetime.datetime.now()
+        save_db()
+        if collisions:
+            return {
+                "success": False if not override else True,
+                "error_type": "FunctionNameCollision" if not override else None,
+                "message": f"The following function names already exist and were skipped: {collisions}",
+                "function_ids": new_func_ids,
+                "skipped_functions": collisions
+            }
+        return {"success": True, "message": f"Imported module '{module_name}' with {len(new_func_ids)} functions.", "function_ids": new_func_ids}
+    except Exception as e:
+        import traceback
+        return {
+            "success": False,
+            "error_type": "PythonException",
+            "message": str(e),
+            "suggested_action": "Check the Python traceback for details and report this as a bug if unexpected.",
+            "traceback": traceback.format_exc()
+        }
 
 # Use extracted modules directly (no fallback paths). These modules were moved to src.autocode during the refactor.
 try:
