@@ -179,8 +179,18 @@ class CodeDatabase:
 
     def execute_tests(self, function_id: str = None):
         results = []
+        # Check for missing function
         if function_id:
-            funcs = [self.functions.get(function_id)] if function_id in self.functions else []
+            func = self.functions.get(function_id)
+            if not func:
+                error_result = {
+                    "success": False,
+                    "error_type": "function_not_found",
+                    "message": f"Function ID {function_id} not found.",
+                    "suggested_action": "Check the function ID or create the function first."
+                }
+                return [error_result]
+            funcs = [func]
         else:
             funcs = list(self.functions.values())
 
@@ -193,6 +203,15 @@ class CodeDatabase:
 
         for func in funcs:
             if not func:
+                continue
+            if not func.unit_tests:
+                error_result = {
+                    "success": False,
+                    "error_type": "no_tests_found",
+                    "message": f"No unit tests found for function '{func.name}' (ID: {func.function_id}).",
+                    "suggested_action": "Add at least one unit test to this function before running tests."
+                }
+                results.append(error_result)
                 continue
             for test in func.unit_tests:
                 result = test.run_test(func.code_snippet)
@@ -223,14 +242,44 @@ class CodeDatabase:
         print(f"Added Function {function_id} to Module {module_name}")
 
     def add_dependency(self, function_id: str, depends_on_id: str):
+        """Add a dependency from one function to another, with circular dependency detection."""
         func = self.functions.get(function_id)
         if not func:
-            raise ValueError(f"Function ID {function_id} not found.")
+            return {
+                "success": False,
+                "error_type": "FunctionNotFound",
+                "message": f"Function ID '{function_id}' not found.",
+                "suggested_action": "Check the function ID or create the function first."
+            }
         if depends_on_id not in self.functions:
-            raise ValueError(f"Dependency function ID {depends_on_id} not found.")
+            return {
+                "success": False,
+                "error_type": "DependencyNotFound",
+                "message": f"Dependency function ID '{depends_on_id}' not found.",
+                "suggested_action": "Check the dependency function ID or create the function first."
+            }
+        # Detect direct or indirect cycles using DFS
+        def has_cycle(start_id, target_id, visited=None):
+            if visited is None:
+                visited = set()
+            if start_id == target_id:
+                return True
+            visited.add(start_id)
+            for dep_id in getattr(self.functions.get(start_id), 'dependencies', []):
+                if dep_id not in visited and has_cycle(dep_id, target_id, visited):
+                    return True
+            return False
+        # Check if adding depends_on_id to function_id would create a cycle
+        if has_cycle(depends_on_id, function_id):
+            return {
+                "success": False,
+                "error_type": "CircularDependency",
+                "message": f"Adding this dependency would create a circular dependency between '{function_id}' and '{depends_on_id}'.",
+                "suggested_action": "Review the dependency graph and avoid cycles."
+            }
         func.add_dependency(depends_on_id)
         self.last_modified_date = datetime.datetime.now()
-        print(f"Added dependency: {function_id} depends on {depends_on_id}")
+        return {"success": True, "message": f"Added dependency: {function_id} depends on {depends_on_id}"}
 
     def add_tag(self, function_id: str, tag: str):
         func = self.functions.get(function_id)
@@ -313,128 +362,230 @@ class CodeDatabase:
     
     # Simple JSON export/import helpers
 def export_function(function_id: str, filepath: str):
-    func = _db.functions.get(function_id)
-    if not func:
-        raise ValueError(f"Function ID {function_id} not found.")
-    if not hasattr(func, "modules") or func.modules is None:
-        func.modules = []
-    if not hasattr(func, "tags") or func.tags is None:
-        func.tags = []
-    data = {
-        "function_id": func.function_id,
-        "name": func.name,
-        "description": func.description,
-        "code_snippet": func.code_snippet,
-        "modules": func.modules,
-        "tags": func.tags,
-        "creation_date": func.creation_date.isoformat(),
-        "last_modified_date": func.last_modified_date.isoformat(),
-        "unit_tests": [
-            {
-                "test_id": t.test_id,
-                "name": t.name,
-                "description": t.description,
-                "test_case": t.test_case,
+    try:
+        func = _db.functions.get(function_id)
+        if not func:
+            return {
+                "success": False,
+                "error_type": "FunctionNotFound",
+                "message": f"Function ID '{function_id}' not found.",
+                "suggested_action": "Check the function ID or create the function first."
             }
-            for t in getattr(func, "unit_tests", [])
-        ],
-    }
-    with open(filepath, "w", encoding="utf-8") as f:
-        json.dump(data, f, indent=2)
-    print(f"Exported function {function_id} to {filepath}")
+        if not hasattr(func, "modules") or func.modules is None:
+            func.modules = []
+        if not hasattr(func, "tags") or func.tags is None:
+            func.tags = []
+        if os.path.exists(filepath):
+            return {
+                "success": False,
+                "error_type": "FileExists",
+                "message": f"File '{filepath}' already exists.",
+                "suggested_action": "Choose a different file path or remove the existing file."
+            }
+        data = {
+            "function_id": func.function_id,
+            "name": func.name,
+            "description": func.description,
+            "code_snippet": func.code_snippet,
+            "modules": func.modules,
+            "tags": func.tags,
+            "creation_date": func.creation_date.isoformat(),
+            "last_modified_date": func.last_modified_date.isoformat(),
+            "unit_tests": [
+                {
+                    "test_id": t.test_id,
+                    "name": t.name,
+                    "description": t.description,
+                    "test_case": t.test_case,
+                }
+                for t in getattr(func, "unit_tests", [])
+            ],
+        }
+        with open(filepath, "w", encoding="utf-8") as f:
+            json.dump(data, f, indent=2)
+        return {"success": True, "message": f"Exported function {function_id} to {filepath}"}
+    except Exception as e:
+        import traceback
+        return {
+            "success": False,
+            "error_type": "PythonException",
+            "message": str(e),
+            "suggested_action": "Check the Python traceback for details and report this as a bug if unexpected.",
+            "traceback": traceback.format_exc()
+        }
 
 def import_function(filepath: str):
-    with open(filepath, "r", encoding="utf-8") as f:
-        data = json.load(f)
-    func = Function(
-        name=data["name"],
-        description=data["description"],
-        code_snippet=data["code_snippet"],
-        modules=data.get("modules", []),
-        tags=data.get("tags", []),
-    )
-    _db.functions[func.function_id] = func
-    for t in data.get("unit_tests", []):
-        test = UnitTest(
-            function_id=func.function_id,
-            name=t["name"],
-            description=t.get("description", ""),
-            test_case=t["test_case"],
-        )
-        func.add_unit_test(test)
-    for tag in getattr(func, "tags", []):
-        _db.tags.add(tag)
-    _db.last_modified_date = datetime.datetime.now()
-    save_db()
-    print(f"Imported function '{func.name}' with new ID: {func.function_id}")
-    return func.function_id
-
-def export_module(module_name: str, filepath: str):
-    if module_name not in _db.modules:
-        raise ValueError(f"Module '{module_name}' not found.")
-    functions = [
-        f for f in _db.functions.values()
-        if module_name in (f.modules if hasattr(f, "modules") else [])
-    ]
-    data = {
-        "module_name": module_name,
-        "functions": [
-            {
-                "function_id": func.function_id,
-                "name": func.name,
-                "description": func.description,
-                "code_snippet": func.code_snippet,
-                "creation_date": func.creation_date.isoformat(),
-                "last_modified_date": func.last_modified_date.isoformat(),
-                "modules": func.modules,
-                "tags": getattr(func, "tags", []),
-                "unit_tests": [
-                    {
-                        "test_id": t.test_id,
-                        "name": t.name,
-                        "description": t.description,
-                        "test_case": t.test_case
-                    }
-                    for t in func.unit_tests
-                ]
+    try:
+        if not os.path.exists(filepath):
+            return {
+                "success": False,
+                "error_type": "FileNotFound",
+                "message": f"File '{filepath}' not found.",
+                "suggested_action": "Check the file path or export a function first."
             }
-            for func in functions
-        ]
-    }
-    with open(filepath, "w", encoding="utf-8") as f:
-        json.dump(data, f, indent=2)
-    print(f"Exported module '{module_name}' to {filepath}")
-
-def import_module(filepath: str):
-    with open(filepath, "r", encoding="utf-8") as f:
-        data = json.load(f)
-    module_name = data["module_name"]
-    _db.add_module(module_name)
-    new_func_ids = []
-    for func_data in data.get("functions", []):
+        with open(filepath, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        # Check for collision by name
+        for f in _db.functions.values():
+            if f.name == data["name"]:
+                return {
+                    "success": False,
+                    "error_type": "FunctionNameCollision",
+                    "message": f"A function named '{data['name']}' already exists.",
+                    "suggested_action": "Rename the function before importing or delete the existing one."
+                }
         func = Function(
-            name=func_data["name"],
-            description=func_data["description"],
-            code_snippet=func_data["code_snippet"],
-            modules=func_data.get("modules", []),
-            tags=func_data.get("tags", [])
+            name=data["name"],
+            description=data["description"],
+            code_snippet=data["code_snippet"],
+            modules=data.get("modules", []),
+            tags=data.get("tags", []),
         )
         _db.functions[func.function_id] = func
-        for t in func_data.get("unit_tests", []):
+        for t in data.get("unit_tests", []):
             test = UnitTest(
                 function_id=func.function_id,
                 name=t["name"],
-                description=t["description"],
-                test_case=t["test_case"]
+                description=t.get("description", ""),
+                test_case=t["test_case"],
             )
             func.add_unit_test(test)
         for tag in getattr(func, "tags", []):
             _db.tags.add(tag)
-        new_func_ids.append(func.function_id)
-    _db.last_modified_date = datetime.datetime.now()
-    save_db()
-    print(f"Imported module '{module_name}' with {len(new_func_ids)} functions.")
-    return new_func_ids
+        _db.last_modified_date = datetime.datetime.now()
+        save_db()
+        return {"success": True, "message": f"Imported function '{func.name}' with new ID: {func.function_id}", "function_id": func.function_id}
+    except Exception as e:
+        import traceback
+        return {
+            "success": False,
+            "error_type": "PythonException",
+            "message": str(e),
+            "suggested_action": "Check the Python traceback for details and report this as a bug if unexpected.",
+            "traceback": traceback.format_exc()
+        }
+
+def export_module(module_name: str, filepath: str):
+    try:
+        if module_name not in _db.modules:
+            return {
+                "success": False,
+                "error_type": "ModuleNotFound",
+                "message": f"Module '{module_name}' not found.",
+                "suggested_action": "Check the module name or create the module first."
+            }
+        if os.path.exists(filepath):
+            return {
+                "success": False,
+                "error_type": "FileExists",
+                "message": f"File '{filepath}' already exists.",
+                "suggested_action": "Choose a different file path or remove the existing file."
+            }
+        functions = [
+            f for f in _db.functions.values()
+            if module_name in (f.modules if hasattr(f, "modules") else [])
+        ]
+        data = {
+            "module_name": module_name,
+            "functions": [
+                {
+                    "function_id": func.function_id,
+                    "name": func.name,
+                    "description": func.description,
+                    "code_snippet": func.code_snippet,
+                    "creation_date": func.creation_date.isoformat(),
+                    "last_modified_date": func.last_modified_date.isoformat(),
+                    "modules": func.modules,
+                    "tags": getattr(func, "tags", []),
+                    "unit_tests": [
+                        {
+                            "test_id": t.test_id,
+                            "name": t.name,
+                            "description": t.description,
+                            "test_case": t.test_case
+                        }
+                        for t in func.unit_tests
+                    ]
+                }
+                for func in functions
+            ]
+        }
+        with open(filepath, "w", encoding="utf-8") as f:
+            json.dump(data, f, indent=2)
+        return {"success": True, "message": f"Exported module '{module_name}' to {filepath}"}
+    except Exception as e:
+        import traceback
+        return {
+            "success": False,
+            "error_type": "PythonException",
+            "message": str(e),
+            "suggested_action": "Check the Python traceback for details and report this as a bug if unexpected.",
+            "traceback": traceback.format_exc()
+        }
+
+def import_module(filepath: str):
+    try:
+        if not os.path.exists(filepath):
+            return {
+                "success": False,
+                "error_type": "FileNotFound",
+                "message": f"File '{filepath}' not found.",
+                "suggested_action": "Check the file path or export a module first."
+            }
+        with open(filepath, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        module_name = data["module_name"]
+        # Check for collision by module name
+        if module_name in _db.modules:
+            return {
+                "success": False,
+                "error_type": "ModuleNameCollision",
+                "message": f"A module named '{module_name}' already exists.",
+                "suggested_action": "Rename the module before importing or delete the existing one."
+            }
+        _db.add_module(module_name)
+        new_func_ids = []
+        for func_data in data.get("functions", []):
+            # Check for function name collision
+            for f in _db.functions.values():
+                if f.name == func_data["name"]:
+                    return {
+                        "success": False,
+                        "error_type": "FunctionNameCollision",
+                        "message": f"A function named '{func_data['name']}' already exists.",
+                        "suggested_action": "Rename the function before importing or delete the existing one."
+                    }
+            func = Function(
+                name=func_data["name"],
+                description=func_data["description"],
+                code_snippet=func_data["code_snippet"],
+                modules=func_data.get("modules", []),
+                tags=func_data.get("tags", [])
+            )
+            _db.functions[func.function_id] = func
+            for t in func_data.get("unit_tests", []):
+                test = UnitTest(
+                    function_id=func.function_id,
+                    name=t["name"],
+                    description=t["description"],
+                    test_case=t["test_case"]
+                )
+                func.add_unit_test(test)
+            for tag in getattr(func, "tags", []):
+                _db.tags.add(tag)
+            new_func_ids.append(func.function_id)
+        _db.last_modified_date = datetime.datetime.now()
+        save_db()
+        return {"success": True, "message": f"Imported module '{module_name}' with {len(new_func_ids)} functions.", "function_ids": new_func_ids}
+    except Exception as e:
+        import traceback
+        return {
+            "success": False,
+            "error_type": "PythonException",
+            "message": str(e),
+            "suggested_action": "Check the Python traceback for details and report this as a bug if unexpected.",
+            "traceback": traceback.format_exc()
+        }
 
 def import_julia_file(filepath: str, module_name: str = None, generate_tests: bool = False):
     """
@@ -685,16 +836,31 @@ def benchmark_function(function_id: str, input_file: str, iterations: int = 1):
     Returns a dict with timing and memory stats for each run.
     This version uses the persistent Julia runner to avoid subprocess startup costs.
     """
-    func = _db.functions.get(function_id)
-    if not func:
-        raise ValueError(f"Function ID {function_id} not found.")
-    if not os.path.exists(input_file):
-        raise ValueError(f"Input file '{input_file}' not found.")
-    with open(input_file, "r", encoding="utf-8") as f:
-        input_code = f.read()
+    try:
+        func = _db.functions.get(function_id)
+        if not func:
+            return {
+                "success": False,
+                "error_type": "FunctionNotFound",
+                "message": f"Function ID '{function_id}' not found.",
+                "suggested_action": "Check the function ID or create the function first.",
+                "runs": [],
+                "stderr": ""
+            }
+        if not os.path.exists(input_file):
+            return {
+                "success": False,
+                "error_type": "InputFileNotFound",
+                "message": f"Input file '{input_file}' not found.",
+                "suggested_action": "Check the file path or generate the input file.",
+                "runs": [],
+                "stderr": ""
+            }
+        with open(input_file, "r", encoding="utf-8") as f:
+            input_code = f.read()
 
-    # Compose Julia script: function code + input code wrapped in @time
-    julia_script = f"""
+        # Compose Julia script: function code + input code wrapped in @time
+        julia_script = f"""
 {func.code_snippet}
 
 for i in 1:{iterations}
@@ -706,30 +872,67 @@ for i in 1:{iterations}
 end
 """
 
-    # Use persistent runner to evaluate the script and capture printed output
-    from src.autocode import julia_runner
-    success, output = julia_runner.run_julia(julia_script, timeout=60.0)
+        # Use persistent runner to evaluate the script and capture printed output
+        from src.autocode import julia_runner
+        success, output = julia_runner.run_julia(julia_script, timeout=60.0)
 
-    results = []
-    if not success:
-        return {"success": False, "runs": [], "stderr": output}
+        if not success:
+            # Try to parse common Julia error patterns for actionable feedback
+            import re
+            error_msg = output.strip().splitlines()[-1] if output.strip() else "Unknown Julia error."
+            if "syntax error" in output.lower():
+                suggested = "Check your function and input code for syntax errors."
+                error_type = "JuliaSyntaxError"
+            elif "methoderror" in output:
+                suggested = "Check that the function is called with correct argument types."
+                error_type = "JuliaMethodError"
+            elif "loaderror" in output:
+                suggested = "Check for missing modules or bad includes in your code."
+                error_type = "JuliaLoadError"
+            else:
+                suggested = "Check the full Julia error output for details."
+                error_type = "JuliaError"
+            return {
+                "success": False,
+                "error_type": error_type,
+                "message": error_msg,
+                "suggested_action": suggested,
+                "runs": [],
+                "stderr": output
+            }
 
-    stdout = output
-    # Parse output for @time results
-    import re
-    pattern = r"===BENCHMARK_RUN_START===\s*(.*?)\s*===BENCHMARK_RUN_END==="
-    runs = re.findall(pattern, stdout, re.DOTALL)
-    for run in runs:
-        time_line = None
-        for line in run.splitlines():
-            if "seconds" in line and "allocation" in line:
-                time_line = line.strip()
-                break
-        results.append({
-            "raw_output": run.strip(),
-            "time_line": time_line
-        })
-    return {"success": True, "runs": results, "stderr": ""}
+        stdout = output
+        # Parse output for @time results
+        import re
+        pattern = r"===BENCHMARK_RUN_START===\s*(.*?)\s*===BENCHMARK_RUN_END==="
+        runs = re.findall(pattern, stdout, re.DOTALL)
+        results = []
+        for run in runs:
+            time_line = None
+            for line in run.splitlines():
+                if "seconds" in line and "allocation" in line:
+                    time_line = line.strip()
+                    break
+            results.append({
+                "raw_output": run.strip(),
+                "time_line": time_line
+            })
+        return {
+            "success": True,
+            "runs": results,
+            "stderr": ""
+        }
+    except Exception as e:
+        import traceback
+        tb = traceback.format_exc()
+        return {
+            "success": False,
+            "error_type": "PythonException",
+            "message": str(e),
+            "suggested_action": "Check the Python traceback for details and report this as a bug if unexpected.",
+            "runs": [],
+            "stderr": tb
+        }
 
 
 def property_test_function(function_id: str, num_tests: int = 50, seed: int = 42):
@@ -743,7 +946,12 @@ def property_test_function(function_id: str, num_tests: int = 50, seed: int = 42
     """
     func = _db.functions.get(function_id)
     if not func:
-        raise ValueError(f"Function ID {function_id} not found.")
+        return {
+            "success": False,
+            "error_type": "function_not_found",
+            "message": f"Function ID {function_id} not found.",
+            "suggested_action": "Check the function ID or create the function first."
+        }
 
     # --- Check for macros in the function code and warn the user if any are found ---
     macro_pattern = r"@(\w+)"
@@ -857,7 +1065,12 @@ _property_test_runner()
             os.remove(tmpfile)
         except Exception:
             pass
-        return {"success": False, "results": [], "stderr": str(e)}
+        return {
+            "success": False,
+            "error_type": "python_exception",
+            "message": str(e),
+            "suggested_action": "Check the Python test harness and file operations."
+        }
 
     print(f"[DEBUG] Persistent runner returned success={success}; output sample:\n{output.splitlines()[:20]}")
 
@@ -874,7 +1087,29 @@ _property_test_runner()
             os.remove(tmpfile)
         except Exception:
             pass
-        return {"success": False, "results": [], "stderr": stderr_snip}
+        # Heuristics for common Julia errors
+        error_type = "julia_error"
+        message = stderr_snip or "Property-based test failed with unknown error."
+        suggested_action = "Check the function code and property test logic for errors."
+        if stderr_snip:
+            if "AssertionError" in stderr_snip:
+                error_type = "assertion_failure"
+                suggested_action = "Check the property test assertions and expected outputs."
+            elif "syntax error" in stderr_snip or "ParseError" in stderr_snip:
+                error_type = "syntax_error"
+                suggested_action = "Check the function code for syntax errors."
+            elif "UndefVarError" in stderr_snip or "not defined" in stderr_snip:
+                error_type = "undefined_variable"
+                suggested_action = "Check for typos or missing definitions in the function or test."
+            elif "LoadError" in stderr_snip:
+                error_type = "load_error"
+                suggested_action = "Check included files and their paths."
+        return {
+            "success": False,
+            "error_type": error_type,
+            "message": message,
+            "suggested_action": suggested_action
+        }
 
     stdout = output
     for line in stdout.splitlines():
@@ -938,8 +1173,9 @@ def add_function_to_module(function_id: str, module_name: str):
 @register_command()
 def add_dependency(function_id: str, depends_on_id: str):
     """Add a dependency from one function to another."""
-    _db.add_dependency(function_id, depends_on_id)
+    result = _db.add_dependency(function_id, depends_on_id)
     save_db()
+    return result
 
 @register_command()
 def add_tag(function_id: str, tag: str):
@@ -1027,14 +1263,37 @@ def run_tests(function_id: str = None):
     results = _db.execute_tests(function_id)
     print(f"[DEBUG] run_tests: {len(results)} results generated.")
     save_db()
-    return [
-        {
-            "test_id": r.test_id,
-            "status": r.status.value,
-            "output": r.actual_result
-        }
-        for r in results
-    ]
+    # If results are error dicts, propagate as-is
+    formatted = []
+    for r in results:
+        try:
+            # If it's a structured error dict, propagate as-is
+            if isinstance(r, dict) and ("error_type" in r or "success" in r):
+                # Ensure all keys are serializable
+                formatted.append({str(k): v for k, v in r.items()})
+            # If it's a TestResult or similar, format as dict
+            elif hasattr(r, 'test_id'):
+                output = getattr(r, 'actual_result', None)
+                # If output is a dict, ensure all keys are strings
+                if isinstance(output, dict):
+                    output = {str(k): v for k, v in output.items()}
+                formatted.append({
+                    "test_id": getattr(r, 'test_id', None),
+                    "status": getattr(r, 'status', None).value if hasattr(r, 'status') else None,
+                    "output": output
+                })
+            else:
+                # Fallback: string representation
+                formatted.append({"output": str(r)})
+        except Exception as e:
+            # If any entry is malformed, skip and log as error result
+            formatted.append({
+                "success": False,
+                "error_type": "malformed_test_result",
+                "message": f"Malformed test result entry: {str(e)}",
+                "suggested_action": "Purge or repair legacy test results in the database."
+            })
+    return formatted
 
 @register_command()
 def get_test_results(function_id: str = None):

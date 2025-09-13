@@ -68,6 +68,7 @@ class UnitTest:
         """
         Run the unit test by executing the function and test case in Julia via the
         persistent Julia runner to avoid spawning a new Julia process per test.
+        Returns a TestResult with structured, actionable error info on failure.
         """
         print(f"Running Test '{self.name}' for Function ID {self.function_id}")
 
@@ -91,13 +92,7 @@ class UnitTest:
         test_path_for_include = test_filename.replace('\\', '/')
 
         try:
-            # Use the persistent Julia runner to include both files in a single call.
-            # Compose a single-line Julia expression that includes the function file
-            # and then the test file. Using include("..."); include("...") keeps
-            # the expression as one line so it works with the runner's line-based protocol.
             expr = f'include("{func_path_for_include}"); include("{test_path_for_include}")'
-
-            # Import the runner locally to avoid circular imports at module load time
             from src.autocode import julia_runner
             success, output = julia_runner.run_julia(expr, timeout=15.0)
 
@@ -106,7 +101,30 @@ class UnitTest:
                 actual_result = "Test Passed."
             else:
                 status = TestStatusEnum.FAILED
-                actual_result = output or "Test failed with unknown error."
+                # Parse output for actionable error info
+                error_type = "julia_error"
+                message = output or "Test failed with unknown error."
+                suggested_action = "Check the test case and function code for errors."
+                # Heuristics for common Julia errors
+                if output:
+                    if "AssertionError" in output:
+                        error_type = "assertion_failure"
+                        suggested_action = "Check the test assertions and expected outputs."
+                    elif "syntax error" in output or "ParseError" in output:
+                        error_type = "syntax_error"
+                        suggested_action = "Check the function and test code for syntax errors."
+                    elif "UndefVarError" in output or "not defined" in output:
+                        error_type = "undefined_variable"
+                        suggested_action = "Check for typos or missing definitions in the function or test."
+                    elif "LoadError" in output:
+                        error_type = "load_error"
+                        suggested_action = "Check included files and their paths."
+                actual_result = {
+                    "success": False,
+                    "error_type": error_type,
+                    "message": message,
+                    "suggested_action": suggested_action
+                }
                 print(f"Test Failed: {actual_result}")
 
             return TestResult(
@@ -118,10 +136,17 @@ class UnitTest:
 
         except Exception as e:
             print(f"Exception during test execution: {e}")
+            # Return structured error for Python-side errors
+            actual_result = {
+                "success": False,
+                "error_type": "python_exception",
+                "message": str(e),
+                "suggested_action": "Check the Python test harness and file operations."
+            }
             return TestResult(
                 test_id=self.test_id,
                 function_id=self.function_id,
-                actual_result=str(e),
+                actual_result=actual_result,
                 status=TestStatusEnum.FAILED
             )
 

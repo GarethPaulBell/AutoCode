@@ -1,71 +1,89 @@
-# AutoCode Development Roadmap
 
-This document outlines potential future directions for the AutoCode project, based on ideas for new features and improvements. The roadmap is organized into phases, from short-term enhancements to long-term strategic goals.
+# AutoCode Development Roadmap (User-Tested Priorities)
 
----
-
-## Phase 1: Core Workflow & Intelligence Enhancements (Short-Term)
-
-This phase focuses on adding high-value intelligence and analysis features to the existing command-line tool and database.
-
-- **[ ] Function Dependency Visualization:**
-    - Create a command to generate and view a dependency graph of functions within the database.
-    - This will help users understand code structure and the impact of potential changes.
-
-- **[ ] Performance Benchmarking Framework:**
-    - Add functionality to define, run, and store performance benchmarks for functions.
-    - Track performance over time as functions are modified.
-
-- **[ ] Code Similarity Detection:**
-    - Implement a feature that, upon adding a new function, automatically checks for semantically similar functions already in the database.
-    - This will help prevent code duplication and encourage reuse.
-
-- **[ ] Debug Harness Integration:**
-    - Add a CLI command to quickly send a function from the database to the `debug_harness.jl` file.
-    - `python code_db_cli.py debug-function <function_id>`
+This roadmap is now driven by real-world road testing and user pain points. Items below are prioritized based on actual workflow bottlenecks, missing features, and usability issues encountered by target users.
 
 ---
 
-## Phase 2: Deep IDE Integration (Medium-Term)
+## Phase 1: Critical Usability & Robustness (Immediate)
 
-The goal of this phase is to move AutoCode's functionality directly into the developer's editor, reducing context switching and streamlining the workflow. A VS Code extension would be the primary deliverable.
+- **[ ] User-Friendly Error Messages Everywhere**
+    - All operations (benchmarking, import/export, test failures, circular dependencies, etc.) must provide clear, actionable error messages.
+    - No more cryptic stack traces or silent failures.
 
-- **[ ] **VS Code Extension: Core Features**:**
-    - **[ ] Custom Sidebar Panel:** Create a panel to browse, search, and view functions from the AutoCode database without leaving the editor.
-    - **[ ] Command Palette Integration:** Expose key actions like `search-functions` and `get-function` through the VS Code command palette.
+- **[ ] Test Output & Coverage Improvements**
+    - Show detailed, readable test results (pass/fail, error trace, summary) for every function and module.
+    - Ensure coverage is always up-to-date and accurate after any change.
 
-- **[ ] **VS Code Extension: Editor Enhancements**:**
-    - **[ ] CodeLens Actions:** Provide in-editor buttons above functions to:
-        - `Save to AutoCode`
-        - `Run AutoCode tests`
-        - `View modification history`
-    - **[ ] Inline Diagnostics:** Display metadata from the database directly in the editor, such as test coverage status or the date of the last modification.
+- **[ ] AI Test Generation Quality**
+    - Make AI-generated tests context-aware and signature-matching. No more generic or mismatched tests.
+    - Add property-based and edge-case test generation as first-class features.
 
----
+- **[ ] Import/Export Collision Handling**
+    - Warn or prompt on module/function name collisions during import/export. No silent overwrites or duplicates.
 
-## Phase 3: Advanced Refactoring & AI (Long-Term)
+- **[ ] Circular Dependency & Recursion Detection**
+    - Detect and warn about circular dependencies and infinite recursion in functions and modules.
+    - Provide tools to analyze and break dependency cycles.
 
-Building on the dependency analysis and IDE integration, this phase introduces powerful, intelligent tools for modifying and generating code.
+- **[ ] Benchmarking: Input Validation & Feedback**
+    - Benchmarking must validate input and provide clear feedback if the input is not a function or script.
+    - Document expected input types and error handling.
 
-- **[ ] Automated Refactoring Tools:**
-    - **[ ] Safe Rename:** A tool to rename a function and automatically update all its call sites within the database.
-    - **[ ] Extract Function:** A tool to select a block of code within a function and have it automatically extracted into a new, separate function in the database.
-
-- **[ ] Intelligent Autocompletion:**
-    - Use the semantic search engine to power a more advanced autocompletion system that can suggest entire relevant functions from the database as you type.
-
-- **[ ] Enhanced Test Generation:**
-    - Improve the AI test generation to support more complex strategies, such as property-based testing or automatically targeting common Julia edge cases.
+- **[ ] Function/Module Discovery & Docs**
+    - Add commands/UI to view all docstrings, signatures, and metadata for a module or function at a glance.
 
 ---
 
-## Future Vision: Polyglot Support
+## Phase 2: Workflow Intelligence & Advanced Search (Short-Term)
 
-This is a strategic, architectural goal to expand AutoCode beyond its Julia-centric origins.
+- **[ ] Code Similarity & Duplication Detection**
+    - On adding a new function, automatically check for semantically similar functions in the database.
+    - Warn and suggest reuse to prevent duplication.
 
-- **[ ] Pluggable Language Architecture:**
-    - Refactor the core logic to be language-agnostic.
-    - Isolate language-specific components (parsing, test execution) into "language plugins."
+- **[ ] Semantic Search Ranking & Filtering**
+    - Improve semantic search to rank by true relevance and allow filtering by module/tag.
+    - Make tag-based search and auto-suggestion prominent in the UI/CLI.
 
-- **[ ] Add Python Support:**
-    - As a proof-of-concept, create a language plugin for Python. This would involve implementing a Python parser and a test runner for a framework like `pytest`.
+- **[ ] Tag System Enhancements**
+    - Enforce or suggest tags on function creation. Allow searching, filtering, and reporting by tag.
+
+- **[ ] Dependency Visualization & Analysis**
+    - Generate dependency graphs with built-in viewer and cycle/bottleneck detection.
+    - Summarize dependency health and highlight issues.
+
+---
+
+## Phase 3: Deep IDE Integration (Medium-Term)
+
+- **[ ] VS Code Extension: Core Features**
+    - **[ ] Custom Sidebar Panel:** Browse, search, and view functions/modules from the AutoCode database.
+    - **[ ] Command Palette Integration:** Expose key actions like `search-functions` and `get-function`.
+
+- **[ ] VS Code Extension: Editor Enhancements**
+    - **[ ] CodeLens Actions:** In-editor buttons for `Save to AutoCode`, `Run AutoCode tests`, `View modification history`.
+    - **[ ] Inline Diagnostics:** Show test coverage, last modification date, and other metadata directly in the editor.
+
+---
+
+## Phase 4: Advanced Refactoring & AI (Long-Term)
+
+- **[ ] Automated Refactoring Tools**
+    - **[ ] Safe Rename:** Rename a function and update all call sites in the database.
+    - **[ ] Extract Function:** Select code and extract to a new function in the database.
+
+- **[ ] Intelligent Autocompletion**
+    - Use semantic search to suggest entire relevant functions as you type.
+
+- **[ ] Enhanced Test Generation**
+    - Support property-based, randomized, and edge-case test generation for Julia and future languages.
+
+---
+
+## Future Vision: Polyglot & Extensibility
+
+- **[ ] Pluggable Language Architecture**
+    - Refactor core logic to be language-agnostic. Isolate language-specific components into plugins.
+
+- **[ ] Add Python Support**
+    - Implement a Python plugin (parser, test runner, etc.) as a proof-of-concept for polyglot support.
