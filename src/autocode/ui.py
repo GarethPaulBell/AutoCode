@@ -110,3 +110,76 @@ def pretty_print_functions_table(code_db):
     headers = [f"{Fore.CYAN}Function ID{Style.RESET_ALL}", f"{Fore.CYAN}Name{Style.RESET_ALL}", f"{Fore.CYAN}Description{Style.RESET_ALL}", f"{Fore.CYAN}Status{Style.RESET_ALL}"]
 
     print(tabulate(table_data, headers=headers, tablefmt="grid"))
+
+
+# --- NEW: Detailed, Readable Test and Coverage Reporting ---
+def print_test_and_coverage_report(code_db):
+    """
+    Print a detailed, readable test result and coverage summary for every function and module.
+    Shows pass/fail/error/skip/broken, error traces, and concise summaries.
+    Always call after any test or code change to ensure up-to-date coverage.
+    """
+    # Collect per-function results
+    from collections import defaultdict
+    func_results = defaultdict(list)
+    for result in getattr(code_db, 'test_results', []):
+        func_results[result.function_id].append(result)
+
+    # Collect per-function coverage (if available)
+    func_coverage = {}
+    for cov in getattr(code_db, 'coverage', []):
+        func_coverage[cov.function_id] = cov.coverage_percent
+
+    # Table: Function | Status | Coverage | Last Error (if any)
+    table = []
+    for func in code_db.functions.values():
+        results = func_results.get(func.function_id, [])
+        # Find most recent result
+        last_result = results[-1] if results else None
+        status = last_result.status.value if last_result else "No Tests"
+        color = get_dot_color(status)
+        coverage = func_coverage.get(func.function_id, "?")
+        # Show error trace if failed
+        error_trace = ""
+        if last_result and hasattr(last_result, 'error_trace') and last_result.error_trace:
+            error_trace = last_result.error_trace.split('\n')[-1][:80]  # last line, truncated
+        elif last_result and hasattr(last_result, 'actual_result') and isinstance(last_result.actual_result, dict):
+            # For new error dicts
+            msg = last_result.actual_result.get('message')
+            if msg:
+                error_trace = msg.split('\n')[-1][:80]
+        table.append([
+            func.name,
+            color + f" {status}",
+            f"{coverage}%",
+            error_trace or ""
+        ])
+
+    headers = [
+        f"{Fore.CYAN}Function{Style.RESET_ALL}",
+        f"{Fore.CYAN}Status{Style.RESET_ALL}",
+        f"{Fore.CYAN}Coverage{Style.RESET_ALL}",
+        f"{Fore.CYAN}Last Error/Trace{Style.RESET_ALL}"
+    ]
+    print(f"\n{Fore.YELLOW}=== Function Test & Coverage Summary ==={Style.RESET_ALL}")
+    print(tabulate(table, headers=headers, tablefmt="grid"))
+
+    # Print summary stats
+    total = len(table)
+    passed = sum(1 for row in table if "Passed" in row[1])
+    failed = sum(1 for row in table if "Failed" in row[1])
+    no_tests = sum(1 for row in table if "No Tests" in row[1])
+    print(f"\n{Fore.GREEN}Passed:{passed}{Style.RESET_ALL}  {Fore.RED}Failed:{failed}{Style.RESET_ALL}  {Fore.YELLOW}No Tests:{no_tests}{Style.RESET_ALL}  Total:{total}")
+
+    # Optionally: print detailed error traces for failed functions
+    for func, row in zip(code_db.functions.values(), table):
+        if "Failed" in row[1]:
+            print(f"\n{Fore.RED}--- Error Trace for {func.name} ---{Style.RESET_ALL}")
+            for result in func_results[func.function_id]:
+                if hasattr(result, 'error_trace') and result.error_trace:
+                    print(result.error_trace)
+                elif hasattr(result, 'actual_result') and isinstance(result.actual_result, dict):
+                    msg = result.actual_result.get('message')
+                    if msg:
+                        print(msg)
+    print(f"\n{Fore.YELLOW}=== End of Test & Coverage Report ==={Style.RESET_ALL}\n")

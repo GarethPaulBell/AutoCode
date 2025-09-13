@@ -8,6 +8,9 @@ import os
 import sys
 from typing import List, Optional, Dict
 
+# Import pretty test/coverage reporting
+from src.autocode.ui import print_test_and_coverage_report
+
 # Ensure stdout uses UTF-8 encoding for proper output handling
 try:
     sys.stdout.reconfigure(encoding="utf-8")
@@ -177,6 +180,12 @@ class CodeDatabase:
             print(f"Added UnitTest {test.test_id} to Function {function_id}")
         return test
 
+        # Print updated test and coverage report after adding a test
+        try:
+            print_test_and_coverage_report(self)
+        except Exception as e:
+            print(f"[WARN] Could not print test/coverage report: {e}")
+
     def execute_tests(self, function_id: str = None):
         results = []
         # Check for missing function
@@ -218,6 +227,11 @@ class CodeDatabase:
                 self.test_results.append(result)
                 results.append(result)
                 print(f"Test Result: {result}")
+        # Print updated test and coverage report after running tests
+        try:
+            print_test_and_coverage_report(self)
+        except Exception as e:
+            print(f"[WARN] Could not print test/coverage report: {e}")
         return results
 
     def modify_function(self, function_id: str, modifier: str, description: str, new_code_snippet: str):
@@ -230,6 +244,12 @@ class CodeDatabase:
         self.modifications.append(modification)
         self.last_modified_date = datetime.datetime.now()
         print(f"Logged Modification {modification.modification_id} for Function {function_id}")
+
+        # Print updated test and coverage report after code change
+        try:
+            print_test_and_coverage_report(self)
+        except Exception as e:
+            print(f"[WARN] Could not print test/coverage report: {e}")
 
     def add_function_to_module(self, function_id: str, module_name: str):
         func = self.functions.get(function_id)
@@ -1236,6 +1256,12 @@ def modify_function(function_id: str, modifier: str, description: str, code: str
     _db.modify_function(function_id, modifier, description, code)
     save_db()
 
+    # Print updated test and coverage report after code change
+    try:
+        print_test_and_coverage_report(_db)
+    except Exception as e:
+        print(f"[WARN] Could not print test/coverage report: {e}")
+
 @register_command()
 def add_test(function_id: str, name: str, description: str, test_code: str) -> str:
     """Add a unit test to a function."""
@@ -1246,6 +1272,11 @@ def add_test(function_id: str, name: str, description: str, test_code: str) -> s
         raise ValueError(f"Function ID {function_id} not found.")
     print(f"[DEBUG] add_test: Test {test.test_id} added to function {function_id}")
     save_db()
+    # Print updated test and coverage report after adding a test
+    try:
+        print_test_and_coverage_report(_db)
+    except Exception as e:
+        print(f"[WARN] Could not print test/coverage report: {e}")
     return test.test_id
 
 @register_command()
@@ -1339,6 +1370,11 @@ def purge_tests(function_id: str):
     after = len(_db.test_results)
     print(f"[DEBUG] purge_tests: Removed {num_tests} unit tests and {before - after} test results for function {function_id}.")
     save_db()
+    # Print updated test and coverage report after purging tests
+    try:
+        print_test_and_coverage_report(_db)
+    except Exception as e:
+        print(f"[WARN] Could not print test/coverage report: {e}")
 
 # Register the command listing function itself
 @register_command()
