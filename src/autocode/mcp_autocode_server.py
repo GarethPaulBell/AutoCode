@@ -115,6 +115,20 @@ class AutoCodeMCPServer:
         self.tools[tool.name] = tool
 
     def _register_tools(self):
+
+        self._register(Tool(
+            "generate_function_doc",
+            "Generate comprehensive documentation for a function, including code, docstring, tags, modules, tests, test results, and modification history.",
+            {
+                "type": "object",
+                "properties": {
+                    "function_id": {"type": "string", "description": "The function's unique ID."},
+                    "format": {"type": "string", "enum": ["markdown", "json"], "default": "markdown", "description": "Output format: 'markdown' or 'json' (default: markdown)."}
+                },
+                "required": ["function_id"]
+            },
+            lambda a: code_db.generate_function_doc_command(a["function_id"], a.get("format", "markdown"))
+        ))
         self._register(Tool(
             "list_functions",
             "List functions (optionally filtered by module or tag).",
@@ -127,6 +141,21 @@ class AutoCodeMCPServer:
                 "required": []
             },
             lambda args: code_db.list_functions(module=args.get("module"), tag=args.get("tag"))
+        ))
+
+        # Expose the code_db command registry as a tool
+        self._register(Tool(
+            "list_code_db_commands",
+            "List all available code_db command registry entries and their docstrings.",
+            {"type": "object", "properties": {}, "required": []},
+            lambda args: code_db.list_commands_command()
+        ))
+
+        self._register(Tool(
+            "delete_function",
+            "Delete a function by ID, cleaning up all associated data (unit tests, tags, dependencies, modules).",
+            {"type": "object", "properties": {"function_id": {"type": "string"}}, "required": ["function_id"]},
+            lambda a: {"deleted": code_db.delete_function(a["function_id"])}
         ))
 
         self._register(Tool(

@@ -90,6 +90,10 @@ def parse_modules_arg(modules_arg):
     return [m.strip() for m in modules_arg.split(",") if m.strip()]
 
 def main():
+    # delete-function
+    del_func = subparsers.add_parser("delete-function", help="Delete a function by ID (with confirmation).")
+    del_func.add_argument("--function-id", required=False, help="Function ID to delete (defaults to focused or prompts interactively).")
+
     parser = argparse.ArgumentParser(
         description="CLI for managing the code database via code_db.py"
     )
@@ -416,6 +420,25 @@ def main():
         }
 
     def main_dispatch(args):
+        if args.command == "delete-function":
+            args.function_id = _resolve_function_id(getattr(args, "function_id", None)) or (_fuzzy_pick_function() if sys.stdin.isatty() else None)
+            if not args.function_id:
+                print("No function selected."); return
+            func = code_db.get_function(args.function_id)
+            if not func:
+                print(f"Function with ID {args.function_id} not found."); return
+            print(f"About to delete function: {func['name']} (ID: {func['id']})")
+            confirm = input("Are you sure? Type 'yes' to confirm: ").strip().lower()
+            if confirm != "yes":
+                print("Aborted."); return
+            try:
+                deleted = code_db.delete_function(args.function_id)
+                if deleted:
+                    print(f"Function {args.function_id} deleted.")
+                else:
+                    print(f"Function {args.function_id} could not be deleted.")
+            except Exception as e:
+                print(f"Error deleting function: {e}")
         # Handle DB administration commands first
         if args.command == "init-db":
             try:

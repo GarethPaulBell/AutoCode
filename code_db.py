@@ -92,6 +92,42 @@ from src.autocode.julia_parsers import (
 # (Compatibility shims remain in place where needed.)
 
 class CodeDatabase:
+    def delete_function(self, function_id: str) -> bool:
+        """
+        Delete a function by its ID, cleaning up all associated data (unit tests, tags, dependencies, modules).
+        Returns True if deleted, False if not found.
+        """
+        func = self.functions.get(function_id)
+        if not func:
+            print(f"Function ID {function_id} not found.")
+            return False
+
+        # Remove from modules
+        for module_name in getattr(func, "modules", []):
+            module = self.modules.get(module_name)
+            if module and hasattr(module, "functions"):
+                module.functions = [f for f in module.functions if f != function_id]
+
+        # Remove from tags
+        for tag in getattr(func, "tags", []):
+            # Remove tag from global set if no other function uses it
+            still_used = any(tag in f.tags for fid, f in self.functions.items() if fid != function_id)
+            if not still_used and tag in self.tags:
+                self.tags.remove(tag)
+
+        # Remove from dependencies of other functions
+        for other_func in self.functions.values():
+            if hasattr(other_func, "dependencies"):
+                other_func.dependencies = [d for d in other_func.dependencies if d != function_id]
+
+        # Remove test results for this function
+        self.test_results = [r for r in self.test_results if r.function_id != function_id]
+
+        # Remove the function itself
+        del self.functions[function_id]
+        self.last_modified_date = datetime.datetime.now()
+        print(f"Deleted Function {function_id} and cleaned up associated data.")
+        return True
     def __init__(self):
         self.db_name = "AutomatedDevDB"
         self.db_version = "1.0"
@@ -856,48 +892,94 @@ _property_test_runner()
 
 # Models and parsers are imported from src.autocode at module top; no local shims required.
 
+
+# --- Command Registry Implementation ---
+COMMAND_REGISTRY = {}
+
+def register_command(name=None):
+    """Decorator to register a function as a command in the registry."""
+    def decorator(func):
+        cmd_name = name or func.__name__
+        COMMAND_REGISTRY[cmd_name] = func
+        return func
+    return decorator
+
+def list_commands():
+    """Return a list of all registered commands and their docstrings."""
+    return [
+        {
+            "name": name,
+            "doc": (func.__doc__ or "").strip()
+        }
+        for name, func in COMMAND_REGISTRY.items()
+    ]
+
 _db = None
 load_db()
 if _db is None:
     _db = CodeDatabase()
     save_db()
 
+
+# --- Register public API functions in the command registry ---
+@register_command()
 def add_function(name: str, description: str, code: str, modules: Optional[List[str]] = None, tags: Optional[List[str]] = None) -> str:
+    """Add a new function to the database."""
     func = _db.add_function(name, description, code, modules, tags)
     save_db()
     return func.function_id
 
+@register_command()
 def add_function_to_module(function_id: str, module_name: str):
+    """Add a function to a module."""
     _db.add_function_to_module(function_id, module_name)
     save_db()
 
+@register_command()
 def add_dependency(function_id: str, depends_on_id: str):
+    """Add a dependency from one function to another."""
     _db.add_dependency(function_id, depends_on_id)
     save_db()
 
+@register_command()
 def add_tag(function_id: str, tag: str):
+    """Add a tag to a function."""
     _db.add_tag(function_id, tag)
     save_db()
 
+@register_command()
 def list_tags():
+    """List all tags in the database."""
     return _db.list_tags()
 
+@register_command()
 def list_functions_by_tag(tag: str):
+    """List all functions with a given tag."""
     return _db.list_functions_by_tag(tag)
 
+@register_command()
 def list_dependencies(function_id: str):
+    """List all dependencies for a function."""
     return _db.list_dependencies(function_id)
 
+@register_command()
 def visualize_dependencies(filepath: str):
+    """Write a DOT/Graphviz file visualizing function dependencies."""
     _db.visualize_dependencies(filepath)
 
+@register_command()
 def list_modules():
+    """List all modules in the database."""
     return _db.list_modules()
 
+@register_command()
 def list_functions(module: Optional[str] = None, tag: Optional[str] = None):
+    """List all functions, optionally filtered by module or tag."""
     return _db.list_functions(module, tag)
 
+@register_command()
 def get_function(function_id: str):
+    """Get details of a function by ID."""
     func = _db.functions.get(function_id)
     if not func:
         return None
@@ -912,11 +994,15 @@ def get_function(function_id: str):
         "tags": func.tags
     }
 
+@register_command()
 def modify_function(function_id: str, modifier: str, description: str, code: str):
+    """Modify the code of an existing function."""
     _db.modify_function(function_id, modifier, description, code)
     save_db()
 
+@register_command()
 def add_test(function_id: str, name: str, description: str, test_code: str) -> str:
+    """Add a unit test to a function."""
     print(f"[DEBUG] add_test called with function_id={function_id}")
     test = _db.add_unit_test(function_id, name, description, test_code)
     if test is None:
@@ -926,7 +1012,9 @@ def add_test(function_id: str, name: str, description: str, test_code: str) -> s
     save_db()
     return test.test_id
 
+@register_command()
 def run_tests(function_id: str = None):
+    """Run all unit tests, or tests for a specific function."""
     print(f"[DEBUG] run_tests called with function_id={function_id}")
     if function_id:
         func = _db.functions.get(function_id)
@@ -948,7 +1036,9 @@ def run_tests(function_id: str = None):
         for r in results
     ]
 
+@register_command()
 def get_test_results(function_id: str = None):
+    """Get the last test results for all or a specific function."""
     print(f"[DEBUG] get_test_results called with function_id={function_id}")
     print(f"[DEBUG] get_test_results: _db.test_results has {len(_db.test_results)} results total.")
     results = []
@@ -963,7 +1053,9 @@ def get_test_results(function_id: str = None):
     print(f"[DEBUG] get_test_results: returning {len(results)} results for function_id={function_id}")
     return results
 
+@register_command()
 def list_modifications(function_id: str):
+    """List all modifications for a function."""
     return [
         {
             "id": mod.modification_id,
@@ -974,7 +1066,9 @@ def list_modifications(function_id: str):
         if mod.function_id == function_id
     ]
 
+@register_command()
 def purge_tests(function_id: str):
+    """Remove all unit tests and test results for a function."""
     func = _db.functions.get(function_id)
     if not func:
         print(f"[DEBUG] purge_tests: Function ID {function_id} not found.")
@@ -986,6 +1080,107 @@ def purge_tests(function_id: str):
     after = len(_db.test_results)
     print(f"[DEBUG] purge_tests: Removed {num_tests} unit tests and {before - after} test results for function {function_id}.")
     save_db()
+
+# Register the command listing function itself
+@register_command()
+def list_commands_command():
+    """List all available commands and their docstrings."""
+    return list_commands()
+
+
+# --- Automated Documentation Generator ---
+@register_command()
+def generate_function_doc_command(function_id: str, format: str = 'markdown'):
+    """
+    Generate comprehensive documentation for a function, including code, docstring, tags, modules, tests, test results, and modification history.
+    Args:
+        function_id (str): The function's unique ID.
+        format (str): 'markdown' (default) or 'json'.
+    Returns:
+        dict: {'doc': <documentation string or object>}
+    """
+    func = _db.functions.get(function_id)
+    if not func:
+        return {'doc': f"Function ID {function_id} not found."}
+
+    # Extract docstring from code if present
+    from src.autocode.julia_parsers import extract_julia_docstring
+    code_lines = func.code_snippet.splitlines()
+    docstring = None
+    if code_lines:
+        docstring, _ = extract_julia_docstring(code_lines, 0)
+    if not docstring:
+        docstring = func.description or "Not available."
+
+    # Gather test cases and results
+    tests = []
+    for test in getattr(func, 'unit_tests', []):
+        # Find latest result for this test
+        latest_result = None
+        for r in reversed(_db.test_results):
+            if r.test_id == test.test_id:
+                latest_result = r
+                break
+        tests.append({
+            'name': test.name,
+            'description': test.description,
+            'test_code': test.test_case,
+            'last_result': {
+                'status': latest_result.status.value if latest_result else 'Not run',
+                'output': latest_result.actual_result if latest_result else ''
+            } if latest_result else None
+        })
+
+    # Gather modification history
+    modifications = [
+        {
+            'modifier': mod.modifier,
+            'description': mod.description,
+            'date': getattr(mod, 'modification_date', None)
+        }
+        for mod in getattr(_db, 'modifications', [])
+        if getattr(mod, 'function_id', None) == function_id
+    ]
+
+    # Compose documentation
+    doc_md = f"""# Function: {func.name}\n\n"""
+    doc_md += f"**ID:** `{func.function_id}`\n\n"
+    doc_md += f"**Description:** {func.description}\n\n"
+    doc_md += f"**Modules:** {', '.join(func.modules) if func.modules else 'None'}\n\n"
+    doc_md += f"**Tags:** {', '.join(func.tags) if func.tags else 'None'}\n\n"
+    doc_md += f"**Signature:** {func.signature if func.signature else 'Not available'}\n\n"
+    doc_md += f"## Docstring\n\n{docstring}\n\n"
+    doc_md += f"## Code\n\n```julia\n{func.code_snippet}\n```\n\n"
+    doc_md += f"## Unit Tests\n\n"
+    if tests:
+        for t in tests:
+            doc_md += f"### {t['name']}\n- Description: {t['description']}\n- Code:\n```julia\n{t['test_code']}\n```\n- Last Result: {t['last_result']['status']}\n  - Output: {t['last_result']['output']}\n\n"
+    else:
+        doc_md += "No unit tests available.\n\n"
+    doc_md += f"## Modification History\n\n"
+    if modifications:
+        for m in modifications:
+            doc_md += f"- {m['date']}: {m['modifier']} — {m['description']}\n"
+    else:
+        doc_md += "No modifications recorded.\n"
+
+    if format == 'json':
+        return {
+            'doc': {
+                'id': func.function_id,
+                'name': func.name,
+                'description': func.description,
+                'modules': func.modules,
+                'tags': func.tags,
+                'signature': func.signature,
+                'docstring': docstring,
+                'code': func.code_snippet,
+                'unit_tests': tests,
+                'modifications': modifications
+            }
+        }
+    else:
+        return {'doc': doc_md}
 
 def test_function():
     code_db = CodeDatabase()
