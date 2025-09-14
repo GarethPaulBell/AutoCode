@@ -10,6 +10,7 @@ from typing import List, Optional, Dict
 
 # Import pretty test/coverage reporting
 from src.autocode.ui import print_test_and_coverage_report
+from src.autocode import julia_linter
 
 # Ensure stdout uses UTF-8 encoding for proper output handling
 try:
@@ -473,6 +474,19 @@ def export_function(function_id: str, filepath: str):
                 "message": f"Function ID '{function_id}' not found.",
                 "suggested_action": "Check the function ID or create the function first."
             }
+
+        # Lint the function code for compatibility issues before export
+        lint_result = julia_linter.lint_julia_code(func.code_snippet, fix=False)
+        if not lint_result.success:
+            error_messages = [issue.message for issue in lint_result.issues if issue.severity == 'error']
+            return {
+                "success": False,
+                "error_type": "LintingFailed",
+                "message": f"Function contains compatibility errors that prevent export: {', '.join(error_messages)}",
+                "suggested_action": "Fix the compatibility issues in the function code before exporting.",
+                "lint_issues": [{"type": i.type, "message": i.message, "severity": i.severity} for i in lint_result.issues]
+            }
+
         if not hasattr(func, "modules") or func.modules is None:
             func.modules = []
         if not hasattr(func, "tags") or func.tags is None:

@@ -34,7 +34,7 @@ This roadmap is now driven by real-world road testing and user pain points. Item
         - CLI (`code_db_cli.py`) now surfaces the returned filepath, size, sha256 and prints a follow-up hint to open the file.
         - Next steps: add a unit test that calls export functions and validates metadata (size & sha256), and improve MCP tool responses to always include structured error metadata on failure.
 
-- **[ ] Error Handling & Verbose Feedback**
+- **[x] Error Handling & Verbose Feedback**
     - Root-cause: some tools return empty results or silent successes/failures with no actionable message.
     - Goals:
         - Adopt structured responses for all MCP tools: {ok: bool, result: ..., error: {type, message, suggested_action, details?}}

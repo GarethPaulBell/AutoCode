@@ -56,6 +56,7 @@ _ensure_repo_on_path()
 os.environ["MCP_AUTOCODE_MODE"] = "1"
 
 import code_db  # Reuse existing database and generation functions
+from . import julia_linter
 
 JSONRPC = "2.0"
 
@@ -368,16 +369,55 @@ class AutoCodeMCPServer:
         try:
             result = code_db.generate_julia_function(desc)
             parsed = result.parsed
+
+            # Lint the generated code for compatibility issues
+            lint_result = julia_linter.lint_julia_code(parsed.code, fix=True)
+
+            # If linting found errors and we're configured to block unsafe code, reject the function
+            if not lint_result.success:
+                error_messages = [issue.message for issue in lint_result.issues if issue.severity == 'error']
+                return _structured_error(
+                    "LintingFailed",
+                    f"Generated function contains compatibility errors: {', '.join(error_messages)}",
+                    "The generated code has compatibility issues that cannot be automatically fixed. Try a different description or check the linting configuration.",
+                    {
+                        "description": desc,
+                        "lint_issues": [{"type": i.type, "message": i.message, "severity": i.severity} for i in lint_result.issues]
+                    }
+                )
+
+            # Use fixed code if available, otherwise use original
+            final_code = lint_result.fixed_code if lint_result.fixed_code else parsed.code
+
+            # If fixes were applied, update the parsed result
+            if lint_result.fixed_code:
+                # Re-parse the fixed code to update function name and other metadata if needed
+                # For now, we'll assume the fixes don't change the function signature significantly
+                parsed.code = final_code
+
             modules = [module] if module else None
-            fid = code_db.add_function(parsed.function_name, parsed.short_description, parsed.code, modules)
-            return _structured_success({
+            fid = code_db.add_function(parsed.function_name, parsed.short_description, final_code, modules)
+
+            response_data = {
                 "function_id": fid,
                 "name": parsed.function_name,
                 "short_description": parsed.short_description,
-                "code": parsed.code,
+                "code": final_code,
                 "test": parsed.tests,
                 "modules": modules or []
-            }, function_id=fid)
+            }
+
+            # Include linting information if there were warnings or fixes applied
+            if lint_result.issues:
+                response_data["lint_warnings"] = [
+                    {"type": i.type, "message": i.message, "severity": i.severity}
+                    for i in lint_result.issues if i.severity == 'warning'
+                ]
+                if lint_result.fixed_code:
+                    response_data["lint_fixes_applied"] = True
+
+            return _structured_success(response_data, function_id=fid)
+
         except Exception as e:
             return _structured_error("GenerationFailed", f"Failed to generate function: {str(e)}", "Check the description or try a simpler one", {"description": desc})
 
