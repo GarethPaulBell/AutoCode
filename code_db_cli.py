@@ -100,10 +100,10 @@ def main():
     del_func.add_argument("--function-id", required=False, help="Function ID to delete (defaults to focused or prompts interactively).")
 
     # --- Global DB control flags (optional for all commands) ---
-    parser.add_argument("--db-mode", choices=["project", "shared"], help="Select DB mode (per-project or shared)")
-    parser.add_argument("--backend", choices=["pickle", "sqlite"], help="Persistence backend (pickle or sqlite)")
-    parser.add_argument("--db-path", type=str, help="Explicit DB file path (overrides mode/backend resolution)")
-    parser.add_argument("--project-root", type=str, help="Project root for project DB resolution")
+    parser.add_argument("--db-mode", choices=["project", "shared"], help="Select DB mode (per-project or shared). Default: project. See 'init-db' help for details.")
+    parser.add_argument("--backend", choices=["pickle", "sqlite"], help="Persistence backend (pickle or sqlite). Default: pickle for project DB, sqlite for shared DB. See 'init-db' help.")
+    parser.add_argument("--db-path", type=str, help="Explicit DB file path (overrides mode/backend resolution). Must match backend extension.")
+    parser.add_argument("--project-root", type=str, help="Project root for project DB resolution.")
 
     # add-function
     add_func = subparsers.add_parser("add-function", help="Add a new function to the database.")
@@ -241,8 +241,19 @@ def main():
     coverage = subparsers.add_parser("coverage-report", help="Show test coverage for all functions.")
 
     # --- DB management commands ---
-    p_init = subparsers.add_parser("init-db", help="Initialize the AutoCode DB (project/shared)")
-    p_init.add_argument("--overwrite", action="store_true", help="Overwrite if DB already exists")
+    p_init = subparsers.add_parser(
+        "init-db",
+        help="Initialize the AutoCode DB (project/shared).\n\n"
+             "By default, creates a per-project pickle DB at .autocode/code_db.pkl.\n"
+             "To use SQLite, pass --backend sqlite.\n"
+             "You can also use --db-mode shared for a global DB.\n\n"
+             "Examples:\n"
+             "  python code_db_cli.py init-db\n"
+             "  python code_db_cli.py --backend sqlite init-db\n"
+             "  python code_db_cli.py --db-mode shared --backend sqlite init-db\n"
+             "  python code_db_cli.py --db-path ./mydb.sqlite --backend sqlite init-db\n"
+    )
+    p_init.add_argument("--overwrite", action="store_true", help="Overwrite if DB already exists. WARNING: This will erase existing data!")
 
     p_status = subparsers.add_parser("status-db", help="Show DB status and metadata")
 

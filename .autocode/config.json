@@ -1,0 +1,8 @@
+{
+  "db_mode": "project",
+  "backend": "pickle",
+  "db_path": "code_db.pkl",
+  "backups": {
+    "keep": 5
+  }
+}
