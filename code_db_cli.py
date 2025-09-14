@@ -90,14 +90,14 @@ def parse_modules_arg(modules_arg):
     return [m.strip() for m in modules_arg.split(",") if m.strip()]
 
 def main():
-    # delete-function
-    del_func = subparsers.add_parser("delete-function", help="Delete a function by ID (with confirmation).")
-    del_func.add_argument("--function-id", required=False, help="Function ID to delete (defaults to focused or prompts interactively).")
-
     parser = argparse.ArgumentParser(
         description="CLI for managing the code database via code_db.py"
     )
     subparsers = parser.add_subparsers(dest="command", required=True)
+
+    # delete-function
+    del_func = subparsers.add_parser("delete-function", help="Delete a function by ID (with confirmation).")
+    del_func.add_argument("--function-id", required=False, help="Function ID to delete (defaults to focused or prompts interactively).")
 
     # --- Global DB control flags (optional for all commands) ---
     parser.add_argument("--db-mode", choices=["project", "shared"], help="Select DB mode (per-project or shared)")
