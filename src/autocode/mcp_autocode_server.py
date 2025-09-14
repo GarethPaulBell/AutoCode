@@ -275,6 +275,27 @@ class AutoCodeMCPServer:
                 {"type": "object", "properties": {"function_id": "string"}, "required": ["function_id"]},
                 lambda a: code_db.list_dependencies(a["function_id"])
             ))
+        if hasattr(code_db, "remove_dependency"):
+            self._register(Tool(
+                "remove_dependency",
+                "Remove a dependency between two functions.",
+                {"type": "object", "properties": {"function_id": {"type": "string"}, "depends_on_id": {"type": "string"}}, "required": ["function_id", "depends_on_id"]},
+                lambda a: code_db.remove_dependency(a["function_id"], a["depends_on_id"])  # returns dict
+            ))
+        if hasattr(code_db, "find_cycles"):
+            self._register(Tool(
+                "find_cycles",
+                "Detect and return dependency cycles in the DB.",
+                {"type": "object", "properties": {}, "required": []},
+                lambda a: {"cycles": code_db.find_cycles()}
+            ))
+        if hasattr(code_db, "detect_recursion"):
+            self._register(Tool(
+                "detect_recursion",
+                "Detect direct or mutual recursion for a function.",
+                {"type": "object", "properties": {"function_id": {"type": "string"}}, "required": ["function_id"]},
+                lambda a: code_db.detect_recursion(a["function_id"])  # returns dict
+            ))
         if hasattr(code_db, "visualize_dependencies"):
             self._register(Tool(
                 "visualize_dependencies",

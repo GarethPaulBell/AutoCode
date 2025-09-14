@@ -25,6 +25,7 @@ This roadmap is now driven by real-world road testing and user pain points. Item
 - **[ ] Circular Dependency & Recursion Detection**
     - Detect and warn about circular dependencies and infinite recursion in functions and modules.
     - Provide tools to analyze and break dependency cycles.
+    - Notes: basic detection and CLI tools added: `detect-cycles`, `detect-recursion`, `remove-dependency`, and improved `add-dependency` with cycle prevention.
 
 - **[ ] Benchmarking: Input Validation & Feedback**
     - Benchmarking must validate input and provide clear feedback if the input is not a function or script.

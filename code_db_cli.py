@@ -217,6 +217,18 @@ def main():
     add_dep.add_argument("--function-id", required=True, help="Function ID that depends on another.")
     add_dep.add_argument("--depends-on-id", required=True, help="Function ID to depend on.")
 
+    # remove-dependency
+    rem_dep = subparsers.add_parser("remove-dependency", help="Remove a dependency from one function to another.")
+    rem_dep.add_argument("--function-id", required=True, help="Function ID that depends on another.")
+    rem_dep.add_argument("--depends-on-id", required=True, help="Function ID to remove from dependencies.")
+
+    # detect-cycles
+    detect_cycles = subparsers.add_parser("detect-cycles", help="Detect dependency cycles in the DB and print them.")
+
+    # detect-recursion
+    detect_rec = subparsers.add_parser("detect-recursion", help="Detect direct or mutual recursion for a function.")
+    detect_rec.add_argument("--function-id", required=True, help="Function ID to analyze for recursion.")
+
     # list-dependencies
     list_deps = subparsers.add_parser("list-dependencies", help="List all dependencies for a function.")
     list_deps.add_argument("--function-id", required=True, help="Function ID.")
@@ -720,8 +732,13 @@ def main():
                 print(f"Error generating module file: {e}")
         elif args.command == "add-dependency":
             try:
-                code_db.add_dependency(args.function_id, args.depends_on_id)
-                print(f"Added dependency: {args.function_id} depends on {args.depends_on_id}")
+                result = code_db.add_dependency(args.function_id, args.depends_on_id)
+                if isinstance(result, dict) and not result.get("success", False):
+                    print(f"Error adding dependency: {result.get('error_type')}: {result.get('message')}")
+                    if result.get('suggested_action'):
+                        print("Suggested action:", result.get('suggested_action'))
+                else:
+                    print(f"Added dependency: {args.function_id} depends on {args.depends_on_id}")
             except Exception as e:
                 print(f"Error adding dependency: {e}")
         elif args.command == "list-dependencies":
@@ -735,6 +752,38 @@ def main():
                         print(dep)
             except Exception as e:
                 print(f"Error listing dependencies: {e}")
+        elif args.command == "remove-dependency":
+            try:
+                result = code_db.remove_dependency(args.function_id, args.depends_on_id)
+                if isinstance(result, dict) and not result.get("success", False):
+                    print(f"Error removing dependency: {result.get('error_type')}: {result.get('message')}")
+                else:
+                    print(result.get('message') if isinstance(result, dict) else str(result))
+            except Exception as e:
+                print(f"Error removing dependency: {e}")
+        elif args.command == "detect-cycles":
+            try:
+                cycles = code_db.find_cycles()
+                if not cycles:
+                    print("No dependency cycles detected.")
+                else:
+                    print("Detected dependency cycles:")
+                    for i, c in enumerate(cycles, 1):
+                        print(f"Cycle {i}: {' -> '.join(c)} -> {c[0]}")
+            except Exception as e:
+                print(f"Error detecting cycles: {e}")
+        elif args.command == "detect-recursion":
+            try:
+                res = code_db.detect_recursion(args.function_id)
+                print(f"Recursion analysis for {args.function_id}: Direct recursion: {res.get('direct')}.")
+                if res.get('mutual_cycles'):
+                    print("Mutual recursion cycles involving this function:")
+                    for c in res.get('mutual_cycles'):
+                        print("  ", " -> ".join(c) + " -> " + c[0])
+                else:
+                    print("No mutual recursion cycles involving this function detected.")
+            except Exception as e:
+                print(f"Error detecting recursion: {e}")
         elif args.command == "visualize-dependencies":
             try:
                 code_db.visualize_dependencies(args.file)

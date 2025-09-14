@@ -265,19 +265,11 @@ class CodeDatabase:
         """Add a dependency from one function to another, with circular dependency detection."""
         func = self.functions.get(function_id)
         if not func:
-            return {
-                "success": False,
-                "error_type": "FunctionNotFound",
-                "message": f"Function ID '{function_id}' not found.",
-                "suggested_action": "Check the function ID or create the function first."
-            }
+            from src.autocode.errors import make_error
+            return make_error("FunctionNotFound", f"Function ID '{function_id}' not found.", "Check the function ID or create the function first.")
         if depends_on_id not in self.functions:
-            return {
-                "success": False,
-                "error_type": "DependencyNotFound",
-                "message": f"Dependency function ID '{depends_on_id}' not found.",
-                "suggested_action": "Check the dependency function ID or create the function first."
-            }
+            from src.autocode.errors import make_error
+            return make_error("DependencyNotFound", f"Dependency function ID '{depends_on_id}' not found.", "Check the dependency function ID or create the function first.")
         # Detect direct or indirect cycles using DFS
         def has_cycle(start_id, target_id, visited=None):
             if visited is None:
@@ -291,12 +283,12 @@ class CodeDatabase:
             return False
         # Check if adding depends_on_id to function_id would create a cycle
         if has_cycle(depends_on_id, function_id):
-            return {
-                "success": False,
-                "error_type": "CircularDependency",
-                "message": f"Adding this dependency would create a circular dependency between '{function_id}' and '{depends_on_id}'.",
-                "suggested_action": "Review the dependency graph and avoid cycles."
-            }
+            from src.autocode.errors import make_error
+            return make_error(
+                "CircularDependency",
+                f"Adding this dependency would create a circular dependency between '{function_id}' and '{depends_on_id}'.",
+                "Review the dependency graph and avoid cycles."
+            )
         func.add_dependency(depends_on_id)
         self.last_modified_date = datetime.datetime.now()
         return {"success": True, "message": f"Added dependency: {function_id} depends on {depends_on_id}"}
@@ -333,6 +325,96 @@ class CodeDatabase:
         if not func:
             raise ValueError(f"Function ID {function_id} not found.")
         return func.dependencies
+
+    def remove_dependency(self, function_id: str, depends_on_id: str):
+        func = self.functions.get(function_id)
+        from src.autocode.errors import make_error
+        if not func:
+            return make_error("FunctionNotFound", f"Function ID '{function_id}' not found.", "Check the function ID or create the function first.")
+        if depends_on_id not in getattr(func, 'dependencies', []):
+            return make_error("DependencyNotFound", f"Function '{function_id}' does not depend on '{depends_on_id}'.", "Check the dependency list for the function.")
+        func.remove_dependency(depends_on_id)
+        self.last_modified_date = datetime.datetime.now()
+        return {"success": True, "message": f"Removed dependency: {function_id} no longer depends on {depends_on_id}"}
+
+    def _build_dependency_graph(self):
+        """Return adjacency list mapping function_id -> list of dependency ids."""
+        graph = {}
+        for fid, func in self.functions.items():
+            graph[fid] = list(getattr(func, 'dependencies', []) or [])
+        return graph
+
+    def find_cycles(self):
+        """Detect cycles in the dependency graph using DFS and return a list of cycles (each cycle is list of node ids)."""
+        graph = self._build_dependency_graph()
+        visited = set()
+        stack = []
+        onstack = set()
+        cycles = []
+
+        def dfs(node):
+            visited.add(node)
+            stack.append(node)
+            onstack.add(node)
+            for neigh in graph.get(node, []):
+                if neigh not in visited:
+                    dfs(neigh)
+                elif neigh in onstack:
+                    # found a cycle: extract segment
+                    try:
+                        idx = stack.index(neigh)
+                        cycle = stack[idx:] + [neigh]
+                        cycles.append(cycle)
+                    except ValueError:
+                        pass
+            stack.pop()
+            onstack.remove(node)
+
+        for n in graph.keys():
+            if n not in visited:
+                dfs(n)
+
+        # Deduplicate cycles (normalize by rotating so smallest id first)
+        norm = set()
+        unique = []
+        for c in cycles:
+            if not c:
+                continue
+            # remove trailing duplicate (we appended neigh at end)
+            if c[0] == c[-1]:
+                c = c[:-1]
+            # normalize by smallest id
+            minidx = min(range(len(c)), key=lambda i: c[i])
+            rc = tuple(c[minidx:] + c[:minidx])
+            if rc not in norm:
+                norm.add(rc)
+                unique.append(list(rc))
+        return unique
+
+    def detect_recursion_in_function(self, function_id: str):
+        """Heuristic detection of direct or mutual recursion by scanning code for calls to other functions.
+        Returns a dict: { 'direct': bool, 'mutual': [path] }
+        """
+        func = self.functions.get(function_id)
+        if not func:
+            raise ValueError(f"Function ID {function_id} not found.")
+        code = getattr(func, 'code_snippet', '') or ''
+        name = func.name
+        # Simple direct recursion: function name appears followed by '(' in code
+        direct = False
+        try:
+            import re
+            # match name(... or name :: (for higher-order) but avoid function declaration
+            pattern = re.compile(r"\b" + re.escape(name) + r"\s*\(")
+            if pattern.search(code):
+                direct = True
+        except Exception:
+            direct = False
+
+        # For mutual recursion, check if dependency graph contains a cycle involving this function
+        cycles = self.find_cycles()
+        mutual = [c for c in cycles if function_id in c]
+        return {"direct": direct, "mutual_cycles": mutual}
 
     def visualize_dependencies(self, filepath: str):
         with open(filepath, "w", encoding="utf-8") as f:
@@ -914,6 +996,62 @@ def benchmark_function(function_id: str, input_file: str, iterations: int = 1):
         with open(input_file, "r", encoding="utf-8") as f:
             input_code = f.read()
 
+        # --- Input validation: ensure input file is not empty and calls the target function ---
+        if not input_code.strip():
+            return {
+                "success": False,
+                "error_type": "EmptyInputFile",
+                "message": f"Input file '{input_file}' is empty.",
+                "suggested_action": "Provide a Julia input file that calls the target function (e.g., `println(myfunc(args))`).",
+                "runs": [],
+                "stderr": ""
+            }
+
+        func_name = getattr(func, 'name', None)
+        if func_name:
+            try:
+                import re
+
+                def _strip_strings_and_comments(code_text: str) -> str:
+                    # remove triple-quoted strings
+                    code_text = re.sub(r'""".*?"""', '', code_text, flags=re.S)
+                    # remove single/double quoted strings
+                    code_text = re.sub(r"'(?:\\.|[^'])*'", '', code_text)
+                    code_text = re.sub(r'"(?:\\.|[^"])*"', '', code_text)
+                    # remove comments
+                    code_text = re.sub(r'#.*', '', code_text)
+                    return code_text
+
+                # Remove lines that are function declarations to avoid false positives
+                lines = input_code.splitlines()
+                filtered = []
+                func_decl_re = re.compile(r'^\s*function\b')
+                single_line_decl_re = re.compile(r'^\s*[A-Za-z_][A-Za-z0-9_!]*\s*\([^)]*\)\s*=')
+                for ln in lines:
+                    s = ln.strip()
+                    if func_decl_re.match(s) or single_line_decl_re.match(s):
+                        # skip declaration lines
+                        continue
+                    filtered.append(ln)
+
+                cleaned = '\n'.join(filtered)
+                cleaned = _strip_strings_and_comments(cleaned)
+
+                # Look for module-qualified or plain calls: e.g., name(  or Module.name(
+                pattern = re.compile(r'(?:\b|\.)' + re.escape(func_name) + r'\s*\(')
+                if not pattern.search(cleaned):
+                    return {
+                        "success": False,
+                        "error_type": "InputDoesNotCallFunction",
+                        "message": f"Input file '{input_file}' does not appear to call function '{func_name}'.",
+                        "suggested_action": "Ensure the input file invokes the function at least once, e.g., add a line `println(<function_name>(...))`.",
+                        "runs": [],
+                        "stderr": ""
+                    }
+            except Exception:
+                # If validation fails for unexpected reasons, proceed but include no blocking error
+                pass
+
         # Compose Julia script: function code + input code wrapped in @time
         julia_script = f"""
 {func.code_snippet}
@@ -1231,6 +1369,26 @@ def add_dependency(function_id: str, depends_on_id: str):
     result = _db.add_dependency(function_id, depends_on_id)
     save_db()
     return result
+
+
+@register_command()
+def remove_dependency(function_id: str, depends_on_id: str):
+    """Remove a dependency from one function to another."""
+    result = _db.remove_dependency(function_id, depends_on_id)
+    save_db()
+    return result
+
+
+@register_command()
+def find_cycles():
+    """Return list of dependency cycles detected in the DB."""
+    return _db.find_cycles()
+
+
+@register_command()
+def detect_recursion(function_id: str):
+    """Heuristic detection of direct/mutual recursion for a specific function."""
+    return _db.detect_recursion_in_function(function_id)
 
 @register_command()
 def add_tag(function_id: str, tag: str):

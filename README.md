@@ -219,3 +219,7 @@ python src/autocode/mcp_autocode_server.py
 - Async test execution and streaming outputs in CLI
 - Project.toml integration under `[tool.autocode]` to store DB preferences
 - More robust semantic search and caching
+
+## Diagnostics & Tools
+
+See `docs/circular-dependency.md` for details on the new dependency/recursion detection tools and CLI usage examples.
