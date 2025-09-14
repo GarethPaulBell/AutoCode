@@ -75,6 +75,31 @@ def _success(id_, result: Any):
     return {"jsonrpc": JSONRPC, "id": id_, "result": result}
 
 
+def _convert_to_serializable(obj: Any) -> Any:
+    """Convert common non-serializable objects (pydantic models, dataclasses, tuples) into JSON-serializable types."""
+    try:
+        # pydantic v2
+        if hasattr(obj, 'model_dump'):
+            return obj.model_dump()
+        # pydantic v1
+        if hasattr(obj, 'dict') and callable(getattr(obj, 'dict')):
+            return obj.dict()
+        if isinstance(obj, dict):
+            return {str(k): _convert_to_serializable(v) for k, v in obj.items()}
+        if isinstance(obj, (list, tuple, set)):
+            return [_convert_to_serializable(v) for v in obj]
+        # dataclass-like
+        if hasattr(obj, '__dict__'):
+            try:
+                return {k: _convert_to_serializable(v) for k, v in obj.__dict__.items()}
+            except Exception:
+                pass
+        # fallback for simple scalars
+        return obj
+    except Exception:
+        return str(obj)
+
+
 class Tool:
     def __init__(
         self,
@@ -209,7 +234,7 @@ class AutoCodeMCPServer:
             "run_tests",
             "Run tests for a function (or all). (Supports streaming)",
             {"type": "object", "properties": {"function_id": {"type": ["string", "null"]}}, "required": []},
-            lambda a: code_db.run_tests(a.get("function_id")),
+            self._tool_run_tests,
             streaming=True,
             stream_handler=self._stream_run_tests
         ))
@@ -326,9 +351,69 @@ class AutoCodeMCPServer:
         func = code_db.get_function(fid)
         if not func:
             raise ValueError(f"Function {fid} not found")
-        test_code = code_db.write_test_case(func["name"])  # returns str
-        test_id = code_db.add_test(fid, args["name"], args["description"], test_code)
-        return {"test_id": test_id, "code": test_code}
+        # Attempt to provide signature/docstring to the test generator. If missing, try to parse from code.
+        try:
+            signature = func.get("signature") if isinstance(func, dict) else getattr(func, "signature", None)
+            docstring = func.get("docstring") if isinstance(func, dict) else getattr(func, "docstring", None)
+            function_code = func.get("code") if isinstance(func, dict) else getattr(func, "code_snippet", None)
+            function_name = func.get("name") if isinstance(func, dict) else getattr(func, "name", None)
+        except Exception:
+            signature = docstring = function_code = function_name = None
+
+        # If write_test_case expects (function_code, signature, docstring, function_name)
+        # and code_db.write_test_case is available, call it defensively.
+        if hasattr(code_db, "write_test_case") and code_db.write_test_case is not None:
+            # Ensure required pieces are present; try to extract using julia_parsers as fallback
+            if not signature or not docstring:
+                try:
+                    from src.autocode.julia_parsers import parse_julia_function, extract_julia_docstring
+                    if function_code:
+                        parsed = parse_julia_function(function_code)
+                        signature = signature or (parsed.get("declaration") if parsed else "")
+                        ds, _ = extract_julia_docstring(function_code.splitlines(), 0)
+                        docstring = docstring or ds
+                except Exception:
+                    # Leave signature/docstring as-is; the underlying generator should handle or error clearly
+                    pass
+            try:
+                test_code = code_db.write_test_case(function_code or "", signature or "", docstring or "", function_name or "")
+            except TypeError:
+                # Fallback: maybe write_test_case has a simpler signature (function_name only)
+                try:
+                    test_code = code_db.write_test_case(function_name or "")
+                except Exception as e:
+                    raise
+            test_id = code_db.add_test(fid, args["name"], args["description"], test_code)
+            return {"test_id": test_id, "code": test_code}
+        else:
+            raise RuntimeError("Test generation not available on this server")
+
+    def _tool_run_tests(self, args: dict):
+        """Non-streaming wrapper that calls code_db.run_tests and returns JSON-serializable results.
+        The streaming path remains implemented in _stream_run_tests.
+        """
+        try:
+            fid = args.get("function_id")
+            maybe_results = code_db.run_tests(fid) if fid else code_db.run_tests()
+
+            # If the code_db returns a generator (streaming), exhaust it and collect textual lines
+            results_list = []
+            try:
+                if hasattr(maybe_results, '__iter__') and not isinstance(maybe_results, (list, tuple)):
+                    # it's an iterator/generator - consume it
+                    for item in maybe_results:
+                        # try to convert common container types
+                        results_list.append(_convert_to_serializable(item))
+                else:
+                    results_list = _convert_to_serializable(maybe_results)
+            except TypeError:
+                # Not iterable - attempt to serialize directly
+                results_list = _convert_to_serializable(maybe_results)
+
+            return {"results": results_list}
+        except Exception as e:
+            tb = traceback.format_exc()
+            return {"error": str(e), "traceback": tb}
 
     # ---------------- Streaming handlers -----------------
     def _stream_generate_function(self, call_id: int, args: dict, server: 'AutoCodeMCPServer'):

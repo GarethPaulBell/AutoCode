@@ -327,10 +327,26 @@ def run_tests(function_id: Optional[str] = None) -> Generator[Dict[str, Any], No
         return _err(f"{e}")
 
     # Stream human-friendly lines
-    for r in results:
-        line = f"Test {r['test_id']} | {r['status']}: {r.get('output','')[:200]}"
-        yield {"type": "text", "text": line}
-    return _ok(results)
+    # If results is a generator, iterate and yield JSON-serializable dicts
+    try:
+        if hasattr(results, '__iter__') and not isinstance(results, (list, tuple)):
+            for r in results:
+                # Convert to serializable dict if needed
+                if isinstance(r, dict):
+                    yield _ok(r)
+                else:
+                    # Best-effort conversion
+                    try:
+                        out = {k: getattr(r, k) for k in dir(r) if not k.startswith('_') and not callable(getattr(r, k))}
+                        yield _ok(out)
+                    except Exception:
+                        yield _ok({"line": str(r)})
+            return _ok(results)
+        else:
+            # results is a list-like structure
+            return _ok(results)
+    except Exception as e:
+        return _err(f"{e}")
 
 
 @app.tool()
