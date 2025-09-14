@@ -503,9 +503,36 @@ def export_function(function_id: str, filepath: str):
                 for t in getattr(func, "unit_tests", [])
             ],
         }
-        with open(filepath, "w", encoding="utf-8") as f:
-            json.dump(data, f, indent=2)
-        return {"success": True, "message": f"Exported function {function_id} to {filepath}"}
+        # Write atomically to avoid partial files: write to temp in same dir, fsync, then replace
+        import tempfile
+        import hashlib
+        dirpath = os.path.dirname(os.path.abspath(filepath)) or os.getcwd()
+        basename = os.path.basename(filepath)
+        fd, tmp_path = tempfile.mkstemp(prefix=basename + '.', dir=dirpath, text=True)
+        try:
+            with os.fdopen(fd, 'w', encoding='utf-8') as f:
+                json.dump(data, f, indent=2)
+                f.flush()
+                try:
+                    os.fsync(f.fileno())
+                except Exception:
+                    pass
+            os.replace(tmp_path, filepath)
+            # Compute metadata
+            stat = os.stat(filepath)
+            size = stat.st_size
+            sha256 = hashlib.sha256()
+            with open(filepath, 'rb') as r:
+                for chunk in iter(lambda: r.read(8192), b''):
+                    sha256.update(chunk)
+            digest = sha256.hexdigest()
+            return {"success": True, "filepath": filepath, "size": size, "sha256": digest}
+        finally:
+            try:
+                if os.path.exists(tmp_path):
+                    os.remove(tmp_path)
+            except Exception:
+                pass
     except Exception as e:
         import traceback
         return {
@@ -623,9 +650,35 @@ def export_module(module_name: str, filepath: str):
                 for func in functions
             ]
         }
-        with open(filepath, "w", encoding="utf-8") as f:
-            json.dump(data, f, indent=2)
-        return {"success": True, "message": f"Exported module '{module_name}' to {filepath}"}
+        # Atomic write: write to temp file in same dir, fsync, then replace
+        import tempfile
+        import hashlib
+        dirpath = os.path.dirname(os.path.abspath(filepath)) or os.getcwd()
+        basename = os.path.basename(filepath)
+        fd, tmp_path = tempfile.mkstemp(prefix=basename + '.', dir=dirpath, text=True)
+        try:
+            with os.fdopen(fd, 'w', encoding='utf-8') as f:
+                json.dump(data, f, indent=2)
+                f.flush()
+                try:
+                    os.fsync(f.fileno())
+                except Exception:
+                    pass
+            os.replace(tmp_path, filepath)
+            stat = os.stat(filepath)
+            size = stat.st_size
+            sha256 = hashlib.sha256()
+            with open(filepath, 'rb') as r:
+                for chunk in iter(lambda: r.read(8192), b''):
+                    sha256.update(chunk)
+            digest = sha256.hexdigest()
+            return {"success": True, "filepath": filepath, "size": size, "sha256": digest}
+        finally:
+            try:
+                if os.path.exists(tmp_path):
+                    os.remove(tmp_path)
+            except Exception:
+                pass
     except Exception as e:
         import traceback
         return {
@@ -923,19 +976,51 @@ def generate_module_file(module_name: str, filepath: str, with_tests: bool = Fal
     ]
     if not functions:
         raise ValueError(f"No functions found in module '{module_name}'.")
-    with open(filepath, "w", encoding="utf-8") as f:
-        f.write(f"module {module_name}\n\n")
-        for func in functions:
-            f.write(f"# Function: {func.name}\n")
-            f.write(f"# Description: {func.description}\n")
-            f.write(func.code_snippet.strip() + "\n\n")
-            if with_tests and func.unit_tests:
-                for test in func.unit_tests:
-                    f.write(f"# Test: {test.name}\n")
-                    f.write(f"# {test.description}\n")
-                    f.write(test.test_case.strip() + "\n\n")
-        f.write(f"end # module {module_name}\n")
-    print(f"Generated Julia module file '{filepath}' for module '{module_name}' (with_tests={with_tests})")
+    # Write atomically: write to a temp file in the same directory then fsync and rename
+    import tempfile
+    import hashlib
+    dirpath = os.path.dirname(os.path.abspath(filepath)) or os.getcwd()
+    basename = os.path.basename(filepath)
+    fd, tmp_path = tempfile.mkstemp(prefix=basename + '.', dir=dirpath, text=True)
+    try:
+        with os.fdopen(fd, 'w', encoding='utf-8') as f:
+            f.write(f"module {module_name}\n\n")
+            for func in functions:
+                f.write(f"# Function: {func.name}\n")
+                f.write(f"# Description: {func.description}\n")
+                f.write(func.code_snippet.strip() + "\n\n")
+                if with_tests and func.unit_tests:
+                    for test in func.unit_tests:
+                        f.write(f"# Test: {test.name}\n")
+                        f.write(f"# {test.description}\n")
+                        f.write(test.test_case.strip() + "\n\n")
+            f.write(f"end # module {module_name}\n")
+            f.flush()
+            try:
+                os.fsync(f.fileno())
+            except Exception:
+                # best-effort; on some platforms fsync may be unavailable
+                pass
+        # Rename into place atomically
+        os.replace(tmp_path, filepath)
+
+        # Compute metadata
+        stat = os.stat(filepath)
+        size = stat.st_size
+        sha256 = hashlib.sha256()
+        with open(filepath, 'rb') as r:
+            for chunk in iter(lambda: r.read(8192), b''):
+                sha256.update(chunk)
+        digest = sha256.hexdigest()
+        print(f"Generated Julia module file '{filepath}' for module '{module_name}' (with_tests={with_tests})")
+        return {"filepath": filepath, "size": size, "sha256": digest}
+    finally:
+        # ensure temp file cleanup if rename failed
+        try:
+            if os.path.exists(tmp_path):
+                os.remove(tmp_path)
+        except Exception:
+            pass
 
 def get_coverage_report():
     report = []

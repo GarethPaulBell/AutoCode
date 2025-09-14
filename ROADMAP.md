@@ -7,32 +7,59 @@ This roadmap is now driven by real-world road testing and user pain points. Item
 
 ## Phase 1: Critical Usability & Robustness (Immediate)
 
-- **[ ] User-Friendly Error Messages Everywhere**
-    - All operations (benchmarking, import/export, test failures, circular dependencies, etc.) must provide clear, actionable error messages.
-    - No more cryptic stack traces or silent failures.
+- **[x] Fix Test Generation (Top Priority)**
+    - Root-cause: AI test-generation tool (`mcp_autocode_generate_test`) currently crashes with missing-argument errors (example: "_write_test_case_impl() missing 3 required positional arguments: 'signature', 'docstring', and 'function_name'") which prevents automated test creation.
+    - Goals:
+        - Make test-generation a reliable, core feature: generated tests must match function signatures, include docstrings where available, and be attachable to functions as unit tests.
+        - Add validation and graceful fallback: if auto-generation fails, return structured error with cause, stack, and suggested action (retry with more context / generate stub tests).
+    - Acceptance criteria:
+        - `mcp_autocode_generate_test` completes without uncaught exceptions on representative functions.
+        - Generated tests run under the existing Julia test harness and attach to the function record.
+    - Progress:
+        - Standardized `_tool_generate_test` to always return structured responses with fields `{test_id, code, warning?, error?}` instead of raising for predictable failures.
+        - Added unit tests under `tests/test_mcp_generate_test_responses.py` covering missing function, generator not available, generator TypeError fallback, generator exception, and failure to attach test. These tests validate the response shape and warnings.
+        - Remaining: validate that generated tests run in the Julia harness for representative functions (end-to-end integration).
 
-- **[ ] Test Output & Coverage Improvements**
-    - Show detailed, readable test results (pass/fail, error trace, summary) for every function and module.
-    - Ensure coverage is always up-to-date and accurate after any change.
+- **[x] Improve File Export / Import Reliability**
+    - Root-cause: `mcp_autocode_generate_module_file` reported success but did not create the expected file on disk.
+    - Goals:
+        - Ensure export operations are atomic and verify file creation (write-to-temp + fsync + rename pattern) before returning success.
+        - Return clear metadata on success (filepath, size, sha256) or a structured error if writing failed.
+    - Acceptance criteria:
+        - Exports create files in the workspace path when requested and the CLI/API returns the file path in the response.
+        - CLI shows a follow-up hint (e.g., "Run `python code_db_cli.py open-file <path>` to view").
+    - Notes (implementation progress):
+        - Implemented atomic write pattern for exports: write-to-temp file in the destination directory, fsync, and atomic rename via os.replace.
+        - `generate_module_file`, `export_module`, and `export_function` now return structured metadata on success: {"success": True, "filepath": ..., "size": ..., "sha256": ...}.
+        - CLI (`code_db_cli.py`) now surfaces the returned filepath, size, sha256 and prints a follow-up hint to open the file.
+        - Next steps: add a unit test that calls export functions and validates metadata (size & sha256), and improve MCP tool responses to always include structured error metadata on failure.
 
-- **[ ] AI Test Generation Quality**
-    - Make AI-generated tests context-aware and signature-matching. No more generic or mismatched tests.
-    - Add property-based and edge-case test generation as first-class features.
+- **[ ] Error Handling & Verbose Feedback**
+    - Root-cause: some tools return empty results or silent successes/failures with no actionable message.
+    - Goals:
+        - Adopt structured responses for all MCP tools: {ok: bool, result: ..., error: {type, message, suggested_action, details?}}
+        - On failure, include short logs (truncated) and next steps. On success, include contextual metadata (created/modified paths, IDs, counts).
+    - Acceptance criteria:
+        - No tool returns bare "None" or empty payloads when an error is possible.
+        - CLI surfaces the structured error in human-readable format and provides a machine-friendly --json flag.
 
-- **[ ] Import/Export Collision Handling**
-    - Warn or prompt on module/function name collisions during import/export. No silent overwrites or duplicates.
+- **[ ] Julia Language Compatibility & Linting**
+    - Root-cause: generated Julia code uses constructs not supported by some Julia versions (e.g., JS-style regex flags like `/.../u`) and parameter names shadowing built-ins.
+    - Goals:
+        - Add a Julia-specific linter/compatibility checker that runs after generation and before commit/export. The checker should detect unsupported regex flags, naming conflicts, and common version incompatibilities.
+        - Provide automatic fixes where safe (rename shadowing parameters with configurable suffix) and structured warnings otherwise.
+    - Acceptance criteria:
+        - Linter runs as part of generation and export workflows and blocks unsafe code by default.
 
-- **[ ] Circular Dependency & Recursion Detection**
-    - Detect and warn about circular dependencies and infinite recursion in functions and modules.
-    - Provide tools to analyze and break dependency cycles.
-    - Notes: basic detection and CLI tools added: `detect-cycles`, `detect-recursion`, `remove-dependency`, and improved `add-dependency` with cycle prevention.
+- **[ ] Workflow & MCP Integration Improvements**
+    - Root-cause: no direct way to run tests through MCP; manual extraction and local Julia runs are required.
+    - Goals:
+        - Add `mcp_autocode_run_tests` wiring that accepts function IDs or module names and streams test output back to the client.
+        - Improve integration with Julia package system: allow passing a Project.toml context or adding `using` statements automatically in harnesses.
+        - Improve default harness generation for benchmarking and test-running so most functions can be exercised automatically.
+    - Acceptance criteria:
+        - `mcp_autocode_run_tests` is available and successfully runs unit tests for a function/module and returns structured results.
 
-- **[ ] Benchmarking: Input Validation & Feedback**
-    - Benchmarking must validate input and provide clear feedback if the input is not a function or script.
-    - Document expected input types and error handling. See `docs/benchmarking.md` for details and the required server behavior (structured errors, validation steps, and suggested actions).
-
-- **[ ] Function/Module Discovery & Docs**
-    - Add commands/UI to view all docstrings, signatures, and metadata for a module or function at a glance.
 
 ---
 

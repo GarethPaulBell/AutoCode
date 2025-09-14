@@ -1,0 +1,4 @@
+Hello world! This is a simple test file for the text analyzer.
+It contains some words, and some punctuation. Don't worry, it's just a test.
+The quick brown fox jumps over the lazy dog. That's a famous pangram!
+Words like "hello" and "world" appear multiple times. Hello again!

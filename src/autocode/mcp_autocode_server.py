@@ -88,6 +88,13 @@ def _convert_to_serializable(obj: Any) -> Any:
             return {str(k): _convert_to_serializable(v) for k, v in obj.items()}
         if isinstance(obj, (list, tuple, set)):
             return [_convert_to_serializable(v) for v in obj]
+        # materialize generators/iterators (but not strings/bytes)
+        if hasattr(obj, '__iter__') and not isinstance(obj, (str, bytes, dict, list, tuple, set)):
+            try:
+                return [_convert_to_serializable(v) for v in obj]
+            except TypeError:
+                # not actually iterable (e.g., int), fallthrough
+                pass
         # dataclass-like
         if hasattr(obj, '__dict__'):
             try:
@@ -350,7 +357,13 @@ class AutoCodeMCPServer:
         fid = args["function_id"]
         func = code_db.get_function(fid)
         if not func:
-            raise ValueError(f"Function {fid} not found")
+            return {
+                "test_id": None,
+                "code": None,
+                "warning": "FunctionNotFound",
+                "error": f"Function {fid} not found",
+                "suggested_action": "Check the function ID or create the function first."
+            }
         # Attempt to provide signature/docstring to the test generator. If missing, try to parse from code.
         try:
             signature = func.get("signature") if isinstance(func, dict) else getattr(func, "signature", None)
@@ -362,7 +375,16 @@ class AutoCodeMCPServer:
 
         # If write_test_case expects (function_code, signature, docstring, function_name)
         # and code_db.write_test_case is available, call it defensively.
-        if hasattr(code_db, "write_test_case") and code_db.write_test_case is not None:
+        if not (hasattr(code_db, "write_test_case") and code_db.write_test_case is not None):
+            return {
+                "test_id": None,
+                "code": None,
+                "warning": "NotAvailable",
+                "error": "Test generation not available on this server",
+                "suggested_action": "Install/configure the LLM client or enable test generation in this server."
+            }
+
+        try:
             # Ensure required pieces are present; try to extract using julia_parsers as fallback
             if not signature or not docstring:
                 try:
@@ -382,9 +404,38 @@ class AutoCodeMCPServer:
                 try:
                     test_code = code_db.write_test_case(function_name or "")
                 except Exception as e:
-                    raise
-            test_id = code_db.add_test(fid, args["name"], args["description"], test_code)
-            return {"test_id": test_id, "code": test_code}
+                    # As a last-resort, generate a minimal stub test so the flow remains usable
+                    test_code = (
+                        f"using Test\n@testset \"auto_generated_{function_name or 'unknown'}\" begin\n"
+                        "    # stub test generated due to generator error\n"
+                        "    @test true\nend\n"
+                    )
+                    # Return structured response including the original exception
+                    return {"test_id": None, "code": test_code, "warning": "write_test_case TypeError, returned stub test", "error": str(e)}
+            except Exception as e:
+                # General failure: provide stub test and structured error details
+                test_code = (
+                    f"using Test\n@testset \"auto_generated_{function_name or 'unknown'}\" begin\n"
+                    "    # stub test generated due to generator failure\n"
+                    "    @test true\nend\n"
+                )
+                return {"test_id": None, "code": test_code, "warning": "write_test_case failed, returned stub test", "error": str(e)}
+
+            # Attempt to attach the test and return structured success
+            try:
+                test_id = code_db.add_test(fid, args.get("name", f"auto_generated_{function_name or 'test'}"), args.get("description", "Auto-generated test"), test_code)
+                return {"test_id": test_id, "code": test_code}
+            except Exception as e:
+                # If attaching the test fails, return the code plus error metadata
+                return {"test_id": None, "code": test_code, "warning": "add_test_failed", "error": str(e)}
+        except Exception as e:
+            # Catch-all to ensure structured response on unexpected failures
+            test_code = (
+                f"using Test\n@testset \"auto_generated_{function_name or 'unknown'}\" begin\n"
+                "    # stub test generated due to unexpected server error\n"
+                "    @test true\nend\n"
+            )
+            return {"test_id": None, "code": test_code, "warning": "unexpected_failure", "error": str(e)}
         else:
             raise RuntimeError("Test generation not available on this server")
 

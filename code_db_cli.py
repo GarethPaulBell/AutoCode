@@ -679,7 +679,15 @@ def main():
                 print(f"Error fixing test: {e}")
         elif args.command == "export-function":
             try:
-                code_db.export_function(args.function_id, args.file)
+                res = code_db.export_function(args.function_id, args.file)
+                if isinstance(res, dict):
+                    if res.get('success') and res.get('filepath'):
+                        print(f"Exported function to {res['filepath']} (size={res.get('size')} bytes, sha256={res.get('sha256')})")
+                        print(f"Hint: Run `python code_db_cli.py open-file --file {res['filepath']}` to view the result")
+                    else:
+                        print(json.dumps(res, indent=2))
+                else:
+                    print(res)
             except Exception as e:
                 print(f"Error exporting function: {e}")
         elif args.command == "import-function":
@@ -690,7 +698,15 @@ def main():
                 print(f"Error importing function: {e}")
         elif args.command == "export-module":
             try:
-                code_db.export_module(args.module, args.file)
+                res = code_db.export_module(args.module, args.file)
+                if isinstance(res, dict):
+                    if res.get('success') and res.get('filepath'):
+                        print(f"Exported module to {res['filepath']} (size={res.get('size')} bytes, sha256={res.get('sha256')})")
+                        print(f"Hint: Run `python code_db_cli.py open-file --file {res['filepath']}` to view the result")
+                    else:
+                        print(json.dumps(res, indent=2))
+                else:
+                    print(res)
             except Exception as e:
                 print(f"Error exporting module: {e}")
         elif args.command == "import-module":
@@ -727,7 +743,13 @@ def main():
                 print(f"Error searching functions: {e}")
         elif args.command == "generate-module-file":
             try:
-                code_db.generate_module_file(args.module, args.file, with_tests=args.with_tests)
+                res = code_db.generate_module_file(args.module, args.file, with_tests=args.with_tests)
+                if isinstance(res, dict) and res.get('filepath'):
+                    print(f"Wrote module file: {res['filepath']} (size={res.get('size')} bytes, sha256={res.get('sha256')})")
+                    print(f"Hint: Run `python code_db_cli.py open-file --file {res['filepath']}` to view the file")
+                else:
+                    # older behavior may return None or raise; print returned value for debugging
+                    print(res)
             except Exception as e:
                 print(f"Error generating module file: {e}")
         elif args.command == "add-dependency":

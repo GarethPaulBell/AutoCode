@@ -19,7 +19,17 @@ import json
 import sys
 from typing import Optional, List, Dict, Any, Generator
 from types import SimpleNamespace
-from mcp.types import TextContent
+# `mcp` is an optional runtime dependency used when running the MCP server.
+# When running unit tests that only import helpers (e.g., generate_module_file),
+# it's convenient to avoid requiring the `mcp` package. Import defensively and
+# provide a minimal local stub if unavailable.
+try:
+    from mcp.types import TextContent  # type: ignore
+except Exception:
+    class TextContent(dict):
+        """Lightweight stub compatible with expected usage in tests when mcp is not installed."""
+        def __init__(self, text: str):
+            super().__init__(type="text", text=text)
 
 # Ensure stdout uses UTF-8 encoding for proper output handling
 try:
@@ -69,12 +79,11 @@ except Exception as e:
     raise RuntimeError("Failed to import code_db. Ensure it's on PYTHONPATH.") from e
 
 # FastMCP: install `fastmcp` (>=2.0) in your environment.
+# Import defensively so tests that only import helper functions don't require fastmcp.
 try:
-    from fastmcp import FastMCP
-except ImportError as e:
-    raise RuntimeError(
-        "fastmcp is required. pip install fastmcp"
-    ) from e
+    from fastmcp import FastMCP  # type: ignore
+except Exception:
+    FastMCP = None
 
 
 # ---------- Helpers ----------
@@ -119,7 +128,21 @@ def _stream_lines(text: str) -> Generator[Dict[str, Any], None, None]:
 
 
 # ---------- Server ----------
-app = FastMCP("autocode-mcp")
+try:
+    app = FastMCP("autocode-mcp")
+except Exception:
+    # Provide a lightweight no-op app with a `tool` decorator so the module can be
+    # imported in test environments where fastmcp isn't installed. The no-op
+    # decorator returns the function unchanged (or wraps generator functions
+    # similarly), which is sufficient for tests that only need access to helper
+    # functions like generate_module_file.
+    class _NoOpApp:
+        def tool(self, *dargs, **dkwargs):
+            def decorator(fn):
+                return fn
+            return decorator
+
+    app = _NoOpApp()
 
 # Add lightweight logging wrapper so tool calls show inputs, yields and return values.
 import logging, types, functools
@@ -544,10 +567,15 @@ def generate_module_file(module: str, file: str, with_tests: bool = False) -> Di
     Output all functions in a module as a single Julia file, optionally with tests.
     """
     try:
-        code_db.generate_module_file(module, file, with_tests=with_tests)
-        return _ok({"file": file})
+        result = code_db.generate_module_file(module, file, with_tests=with_tests)
+        # result should be metadata dict with filepath, size, sha256
+        if isinstance(result, dict) and result.get("filepath"):
+            hint = f"Run `python code_db_cli.py open-file {result['filepath']}` to view"
+            return _ok({"file": result["filepath"], "size": result.get("size"), "sha256": result.get("sha256"), "hint": hint})
+        # older behavior: no metadata returned
+        return _ok({"file": file, "hint": f"Run `python code_db_cli.py open-file {file}` to view"})
     except Exception as e:
-        return _err(f"{e}")
+        return _err(str(e))
 
 
 @app.tool()
