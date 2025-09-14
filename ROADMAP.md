@@ -29,7 +29,7 @@ This roadmap is now driven by real-world road testing and user pain points. Item
 
 - **[ ] Benchmarking: Input Validation & Feedback**
     - Benchmarking must validate input and provide clear feedback if the input is not a function or script.
-    - Document expected input types and error handling.
+    - Document expected input types and error handling. See `docs/benchmarking.md` for details and the required server behavior (structured errors, validation steps, and suggested actions).
 
 - **[ ] Function/Module Discovery & Docs**
     - Add commands/UI to view all docstrings, signatures, and metadata for a module or function at a glance.
