@@ -43,7 +43,7 @@ This roadmap is now driven by real-world road testing and user pain points. Item
         - No tool returns bare "None" or empty payloads when an error is possible.
         - CLI surfaces the structured error in human-readable format and provides a machine-friendly --json flag.
 
-- **[ ] Julia Language Compatibility & Linting**
+- **[x] Julia Language Compatibility & Linting**
     - Root-cause: generated Julia code uses constructs not supported by some Julia versions (e.g., JS-style regex flags like `/.../u`) and parameter names shadowing built-ins.
     - Goals:
         - Add a Julia-specific linter/compatibility checker that runs after generation and before commit/export. The checker should detect unsupported regex flags, naming conflicts, and common version incompatibilities.

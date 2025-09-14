@@ -22,6 +22,7 @@ import threading
 import time
 import os
 from datetime import datetime
+from pathlib import Path
 from typing import Any, Dict, Callable, Optional
 
 # Ensure repository root is on sys.path so local top-level modules (e.g., code_db) can be imported
@@ -264,9 +265,9 @@ class AutoCodeMCPServer:
         ))
 
         self._register(Tool(
-            "run_tests",
-            "Run tests for a function (or all). (Supports streaming)",
-            {"type": "object", "properties": {"function_id": {"type": ["string", "null"]}}, "required": []},
+            "mcp_autocode_run_tests",
+            "Run tests for a function, module, or all. (Supports streaming)",
+            {"type": "object", "properties": {"function_id": {"type": ["string", "null"]}, "module": {"type": ["string", "null"]}, "project_toml_path": {"type": ["string", "null"], "description": "Path to Project.toml file to include package dependencies"}}, "required": []},
             self._tool_run_tests,
             streaming=True,
             stream_handler=self._stream_run_tests
@@ -500,7 +501,34 @@ class AutoCodeMCPServer:
         """
         try:
             fid = args.get("function_id")
-            maybe_results = code_db.run_tests(fid) if fid else code_db.run_tests()
+            module = args.get("module")
+            project_toml_path = args.get("project_toml_path")
+            
+            # Parse dependencies from Project.toml if provided
+            dependencies = []
+            if project_toml_path:
+                try:
+                    from .persistence import parse_project_toml
+                    project_root = Path(project_toml_path).parent if project_toml_path else None
+                    parsed = parse_project_toml(project_root)
+                    dependencies = parsed.get("deps", [])
+                except Exception as e:
+                    print(f"Warning: Could not parse Project.toml: {e}")
+            
+            # If module is specified, we need to filter functions by module
+            if module:
+                # Get all functions in the specified module
+                all_funcs = code_db.list_functions(module=module)
+                if not all_funcs:
+                    return _structured_error("NoFunctionsFound", f"No functions found in module '{module}'", "Check the module name or add functions to this module")
+                func_ids = [f['id'] for f in all_funcs]
+                # Run tests for all functions in the module
+                maybe_results = []
+                for func_id in func_ids:
+                    results = code_db.run_tests(func_id, dependencies=dependencies)
+                    maybe_results.extend(results)
+            else:
+                maybe_results = code_db.run_tests(fid, dependencies=dependencies) if fid else code_db.run_tests(dependencies=dependencies)
 
             # If the code_db returns a generator (streaming), exhaust it and collect textual lines
             results_list = []
@@ -555,15 +583,40 @@ class AutoCodeMCPServer:
 
     def _stream_run_tests(self, call_id: int, args: dict, server: 'AutoCodeMCPServer'):
         target_fid = args.get("function_id")
+        target_module = args.get("module")
+        project_toml_path = args.get("project_toml_path")
+        
+        # Parse dependencies from Project.toml if provided
+        dependencies = []
+        if project_toml_path:
+            try:
+                from .persistence import parse_project_toml
+                project_root = Path(project_toml_path).parent if project_toml_path else None
+                parsed = parse_project_toml(project_root)
+                dependencies = parsed.get("deps", [])
+            except Exception as e:
+                print(f"Warning: Could not parse Project.toml: {e}")
+        
         try:
             # Build list of (function, tests)
             all_funcs = []
-            if target_fid:
+            if target_module:
+                # Get all functions in the specified module
+                module_funcs = code_db.list_functions(module=target_module)
+                if not module_funcs:
+                    self._emit_stream(call_id, "complete", {"results": [], "message": f"no functions in module '{target_module}'"})
+                    return
+                for f_data in module_funcs:
+                    f_obj = code_db._db.functions.get(f_data['function_id'])
+                    if f_obj:
+                        all_funcs.append(f_obj)
+            elif target_fid:
                 f_obj = code_db._db.functions.get(target_fid)  # type: ignore[attr-defined]
                 if f_obj:
                     all_funcs.append(f_obj)
             else:
                 all_funcs = list(code_db._db.functions.values())  # type: ignore[attr-defined]
+            
             total_tests = sum(len(f.unit_tests) for f in all_funcs)
             if total_tests == 0:
                 self._emit_stream(call_id, "complete", {"results": [], "message": "no tests"})
@@ -573,15 +626,20 @@ class AutoCodeMCPServer:
             # Clear old results for streamed functions (optional)
             if target_fid:
                 code_db._db.test_results = [r for r in code_db._db.test_results if r.function_id != target_fid]  # type: ignore[attr-defined]
+            elif target_module:
+                # Clear results for all functions in the module
+                module_func_ids = {f.function_id for f in all_funcs}
+                code_db._db.test_results = [r for r in code_db._db.test_results if r.function_id not in module_func_ids]  # type: ignore[attr-defined]
             else:
                 func_ids = {f.function_id for f in all_funcs}
                 code_db._db.test_results = [r for r in code_db._db.test_results if r.function_id not in func_ids]  # type: ignore[attr-defined]
+            
             for func in all_funcs:
                 for ut in func.unit_tests:
                     if self._is_cancelled(call_id):
                         self._emit_stream(call_id, "cancelled", {"completed": done, "total": total_tests})
                         return
-                    res = ut.run_test(func.code_snippet)
+                    res = ut.run_test(func.code_snippet, dependencies)
                     code_db._db.test_results.append(res)  # type: ignore[attr-defined]
                     chunk = {"test_id": res.test_id, "function_id": res.function_id, "status": res.status.value, "output": res.actual_result}
                     aggregated.append(chunk)

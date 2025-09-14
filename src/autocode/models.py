@@ -64,11 +64,15 @@ class UnitTest:
         self.description = description
         self.test_case = test_case
 
-    def run_test(self, function_code: str) -> TestResult:
+    def run_test(self, function_code: str, dependencies: Optional[List[str]] = None) -> TestResult:
         """
         Run the unit test by executing the function and test case in Julia via the
         persistent Julia runner to avoid spawning a new Julia process per test.
         Returns a TestResult with structured, actionable error info on failure.
+        
+        Args:
+            function_code: The Julia function code to test
+            dependencies: Optional list of package names to include as using statements
         """
         print(f"Running Test '{self.name}' for Function ID {self.function_id}")
 
@@ -82,7 +86,22 @@ class UnitTest:
         # Convert Windows backslashes to forward slashes for Julia include compatibility
         func_path_for_include = func_filename.replace('\\', '/')
 
-        test_script = f'include("{func_path_for_include}")\n\n{self.test_case}\n'
+        # Build test script with optional dependency using statements
+        test_script_parts = []
+        
+        # Add using statements for dependencies if provided
+        if dependencies:
+            for dep in dependencies:
+                if dep and dep != "Test":  # Test is already included in test cases
+                    test_script_parts.append(f"using {dep}")
+            if test_script_parts:
+                test_script_parts.append("")  # Add blank line after using statements
+        
+        test_script_parts.append(f'include("{func_path_for_include}")')
+        test_script_parts.append("")
+        test_script_parts.append(self.test_case)
+        
+        test_script = "\n".join(test_script_parts) + "\n"
 
         with tempfile.NamedTemporaryFile(mode='w', suffix='.jl', delete=False) as test_file:
             test_file.write(test_script)

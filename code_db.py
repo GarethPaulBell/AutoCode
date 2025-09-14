@@ -187,8 +187,10 @@ class CodeDatabase:
         except Exception as e:
             print(f"[WARN] Could not print test/coverage report: {e}")
 
-    def execute_tests(self, function_id: str = None):
+    def execute_tests(self, function_id: str = None, dependencies: list = None):
         results = []
+        if dependencies is None:
+            dependencies = []
         # Check for missing function
         if function_id:
             func = self.functions.get(function_id)
@@ -224,7 +226,7 @@ class CodeDatabase:
                 results.append(error_result)
                 continue
             for test in func.unit_tests:
-                result = test.run_test(func.code_snippet)
+                result = test.run_test(func.code_snippet, dependencies)
                 self.test_results.append(result)
                 results.append(result)
                 print(f"Test Result: {result}")
@@ -1572,9 +1574,11 @@ def add_test(function_id: str, name: str, description: str, test_code: str) -> s
     return test.test_id
 
 @register_command()
-def run_tests(function_id: str = None):
+def run_tests(function_id: str = None, dependencies: list = None):
     """Run all unit tests, or tests for a specific function."""
-    print(f"[DEBUG] run_tests called with function_id={function_id}")
+    if dependencies is None:
+        dependencies = []
+    print(f"[DEBUG] run_tests called with function_id={function_id}, dependencies={dependencies}")
     if function_id:
         func = _db.functions.get(function_id)
         if func:
@@ -1583,7 +1587,7 @@ def run_tests(function_id: str = None):
             print(f"[DEBUG] run_tests: Function {function_id} not found.")
     else:
         print(f"[DEBUG] run_tests: Running tests for all functions.")
-    results = _db.execute_tests(function_id)
+    results = _db.execute_tests(function_id, dependencies)
     print(f"[DEBUG] run_tests: {len(results)} results generated.")
     save_db()
     # If results are error dicts, propagate as-is

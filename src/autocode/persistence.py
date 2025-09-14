@@ -548,3 +548,36 @@ def unlock_db(project_root: Optional[Path] = None,
         report["reason"] = "not-stale"
     return report
 
+
+def parse_project_toml(project_root: Optional[Path] = None) -> dict:
+    """Parse Project.toml file and extract dependencies.
+    
+    Returns a dict with 'deps' key containing dependency names.
+    Returns empty dict if Project.toml not found or parsing fails.
+    """
+    try:
+        import tomllib
+    except ImportError:
+        # Fallback for older Python versions
+        try:
+            import tomli as tomllib  # type: ignore[import]
+        except ImportError:
+            return {}
+    
+    if project_root is None:
+        project_root = _find_project_root()
+    
+    toml_path = project_root / "Project.toml"
+    if not toml_path.exists():
+        return {}
+    
+    try:
+        with open(toml_path, "rb") as f:
+            data = tomllib.load(f)
+        
+        deps = data.get("deps", {})
+        # Extract just the package names (keys), ignore UUIDs
+        return {"deps": list(deps.keys())}
+    except Exception:
+        return {}
+
