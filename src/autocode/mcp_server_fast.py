@@ -190,13 +190,30 @@ def init_db(overwrite: bool = False,
             db_path: Optional[str] = None,
             project_root: Optional[str] = None) -> Dict[str, Any]:
     """
-    Initialize the DB. Returns path.
+    Initialize the AutoCode DB (project/shared).
+
+    By default, creates a per-project pickle DB at .autocode/code_db.pkl.
+    To use SQLite, pass backend="sqlite". You can also use mode="shared" for a global DB.
+
+    Parameters:
+        overwrite (bool): Overwrite if DB already exists. WARNING: This will erase existing data!
+        mode (str): "project" (default) or "shared".
+        backend (str): "pickle" (default for project DB) or "sqlite" (default for shared DB).
+        db_path (str): Explicit DB file path (overrides mode/backend resolution). Must match backend extension.
+        project_root (str): Project root for project DB resolution.
+
+    Examples:
+        { "backend": "sqlite" }
+        { "mode": "shared", "backend": "sqlite" }
+        { "db_path": "./mydb.sqlite", "backend": "sqlite" }
+
+    Returns: { "path": <db_path> }
     """
     from src.autocode.persistence import init_db as db_init  # lazy import to avoid hard dep at import time
     path = db_init(overwrite=overwrite,
-                   mode=mode, backend=backend,
-                   explicit_path=(None if not db_path else __import__("pathlib").Path(db_path)),
-                   project_root=(None if not project_root else __import__("pathlib").Path(project_root)))
+                  mode=mode, backend=backend,
+                  explicit_path=(None if not db_path else __import__("pathlib").Path(db_path)),
+                  project_root=(None if not project_root else __import__("pathlib").Path(project_root)))
     return _ok({"path": str(path)})
 
 
@@ -207,11 +224,19 @@ def status_db(mode: Optional[str] = None,
               project_root: Optional[str] = None) -> Dict[str, Any]:
     """
     Return DB status/metadata.
+
+    Parameters:
+        mode (str): "project" or "shared".
+        backend (str): "pickle" or "sqlite".
+        db_path (str): Explicit DB file path.
+        project_root (str): Project root for project DB resolution.
+
+    Returns: DB metadata and status fields.
     """
     from src.autocode.persistence import status_db as db_status
     info = db_status(mode=mode, backend=backend,
-                     explicit_path=(None if not db_path else __import__("pathlib").Path(db_path)),
-                     project_root=(None if not project_root else __import__("pathlib").Path(project_root)))
+                    explicit_path=(None if not db_path else __import__("pathlib").Path(db_path)),
+                    project_root=(None if not project_root else __import__("pathlib").Path(project_root)))
     return _ok(info)
 
 
@@ -223,13 +248,23 @@ def migrate_db(to: str,
                db_path: Optional[str] = None,
                project_root: Optional[str] = None) -> Dict[str, Any]:
     """
-    Migrate DB backend between pickle/sqlite.
+    Migrate DB backend between pickle and sqlite.
+
+    Parameters:
+        to (str): Target backend ("pickle" or "sqlite").
+        overwrite (bool): Allow overwrite of destination DB file if exists.
+        mode (str): "project" or "shared".
+        backend (str): Source backend (optional).
+        db_path (str): Explicit DB file path.
+        project_root (str): Project root for project DB resolution.
+
+    Returns: { "dest": <new_db_path> }
     """
     from src.autocode.persistence import migrate_db as db_migrate
     dest = db_migrate(to, overwrite=overwrite,
-                      mode=mode, backend=backend,
-                      explicit_path=(None if not db_path else __import__("pathlib").Path(db_path)),
-                      project_root=(None if not project_root else __import__("pathlib").Path(project_root)))
+                    mode=mode, backend=backend,
+                    explicit_path=(None if not db_path else __import__("pathlib").Path(db_path)),
+                    project_root=(None if not project_root else __import__("pathlib").Path(project_root)))
     return _ok({"dest": str(dest)})
 
 
