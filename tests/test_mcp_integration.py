@@ -32,7 +32,8 @@ def test_mcp_find_cycles_and_recursion_and_remove_dependency():
     resp = call_tool(server, 'find_cycles', {})
     assert resp and 'result' in resp
     result_content = resp['result']['content'][0]['json']
-    assert isinstance(result_content.get('cycles'), list)
+    assert result_content['ok'] is True
+    assert isinstance(result_content['result']['cycles'], list)
 
     # Create a direct recursive function and test detect_recursion via MCP
     code = """
@@ -44,10 +45,12 @@ end
     resp2 = call_tool(server, 'detect_recursion', {'function_id': rec_id})
     assert resp2 and 'result' in resp2
     det = resp2['result']['content'][0]['json']
-    assert isinstance(det, dict) and det.get('direct') is True
+    assert det['ok'] is True
+    assert isinstance(det['result'], dict) and det['result']['direct'] is True
 
     # Test remove_dependency via MCP call (remove f1 -> f2)
     resp3 = call_tool(server, 'remove_dependency', {'function_id': f1_id, 'depends_on_id': f2_id})
     assert resp3 and 'result' in resp3
     rem = resp3['result']['content'][0]['json']
-    assert isinstance(rem, dict) and rem.get('success') is True
+    assert rem['ok'] is True
+    assert isinstance(rem['result'], dict) and rem['result']['success'] is True

@@ -75,6 +75,31 @@ def _success(id_, result: Any):
     return {"jsonrpc": JSONRPC, "id": id_, "result": result}
 
 
+def _structured_success(result: Any, **metadata) -> dict:
+    """Create a structured success response."""
+    return {
+        "ok": True,
+        "result": result,
+        **metadata
+    }
+
+
+def _structured_error(error_type: str, message: str, suggested_action: str = None, details: Any = None) -> dict:
+    """Create a structured error response."""
+    error = {
+        "type": error_type,
+        "message": message
+    }
+    if suggested_action:
+        error["suggested_action"] = suggested_action
+    if details:
+        error["details"] = details
+    return {
+        "ok": False,
+        "error": error
+    }
+
+
 def _convert_to_serializable(obj: Any) -> Any:
     """Convert common non-serializable objects (pydantic models, dataclasses, tuples) into JSON-serializable types."""
     try:
@@ -159,7 +184,7 @@ class AutoCodeMCPServer:
                 },
                 "required": ["function_id"]
             },
-            lambda a: code_db.generate_function_doc_command(a["function_id"], a.get("format", "markdown"))
+            lambda a: (lambda result: _structured_success(result, function_id=a["function_id"], format=a.get("format", "markdown")) if not isinstance(result["doc"], str) or not result["doc"].startswith("Function ID") else _structured_error("FunctionNotFound", result["doc"], "Check the function ID or create the function first"))(code_db.generate_function_doc_command(a["function_id"], a.get("format", "markdown")))
         ))
         self._register(Tool(
             "list_functions",
@@ -172,7 +197,7 @@ class AutoCodeMCPServer:
                 },
                 "required": []
             },
-            lambda args: code_db.list_functions(module=args.get("module"), tag=args.get("tag"))
+            lambda args: _structured_success(code_db.list_functions(module=args.get("module"), tag=args.get("tag")), count=len(code_db.list_functions(module=args.get("module"), tag=args.get("tag"))))
         ))
 
         # Expose the code_db command registry as a tool
@@ -180,21 +205,21 @@ class AutoCodeMCPServer:
             "list_code_db_commands",
             "List all available code_db command registry entries and their docstrings.",
             {"type": "object", "properties": {}, "required": []},
-            lambda args: code_db.list_commands_command()
+            lambda args: _structured_success({"commands": code_db.list_commands_command()}, command_count=len(code_db.list_commands_command()))
         ))
 
         self._register(Tool(
             "delete_function",
             "Delete a function by ID, cleaning up all associated data (unit tests, tags, dependencies, modules).",
             {"type": "object", "properties": {"function_id": {"type": "string"}}, "required": ["function_id"]},
-            lambda a: {"deleted": code_db.delete_function(a["function_id"])}
+            lambda a: _structured_success({"deleted": True}, function_id=a["function_id"]) if code_db._db.delete_function(a["function_id"]) else _structured_error("FunctionNotFound", f"Function {a['function_id']} not found", "Check the function ID")
         ))
 
         self._register(Tool(
             "get_function",
             "Get full details of a function by ID.",
             {"type": "object", "properties": {"id": {"type": "string"}}, "required": ["id"]},
-            lambda args: code_db.get_function(args["id"]) or {}
+            lambda args: _structured_success(code_db.get_function(args["id"])) if code_db.get_function(args["id"]) else _structured_error("FunctionNotFound", f"Function {args['id']} not found", "Check the function ID or create the function first")
         ))
 
         self._register(Tool(
@@ -220,14 +245,14 @@ class AutoCodeMCPServer:
                 },
                 "required": ["name", "description", "code"]
             },
-            lambda a: {"function_id": code_db.add_function(a["name"], a["description"], a["code"], a.get("modules"), a.get("tags"))}
+            lambda a: (lambda fid: _structured_success({"function_id": fid}, function_id=fid))(code_db.add_function(a["name"], a["description"], a["code"], a.get("modules"), a.get("tags")))
         ))
 
         self._register(Tool(
             "modify_function",
             "Modify the code for an existing function (overwrites code).",
             {"type": "object", "properties": {"id": {"type": "string"}, "modifier": {"type": "string"}, "description": {"type": "string"}, "code": {"type": "string"}}, "required": ["id", "modifier", "description", "code"]},
-            lambda a: (code_db.modify_function(a["id"], a["modifier"], a["description"], a["code"]) or {"status": "ok"})
+            lambda a: _structured_success({"status": "modified"}, function_id=a["id"]) if (code_db.get_function(a["id"]) and (code_db.modify_function(a["id"], a["modifier"], a["description"], a["code"]) or True)) else _structured_error("FunctionNotFound", f"Function {a['id']} not found", "Check the function ID or create the function first")
         ))
 
         self._register(Tool(
@@ -250,35 +275,35 @@ class AutoCodeMCPServer:
             "search_functions",
             "Keyword search across name, description, code.",
             {"type": "object", "properties": {"query": {"type": "string"}}, "required": ["query"]},
-            lambda a: code_db.search_functions(a["query"])  # type: ignore[arg-type]
+            lambda a: _structured_success(code_db.search_functions(a["query"]), query=a["query"], result_count=len(code_db.search_functions(a["query"])))  # type: ignore[arg-type]
         ))
 
         self._register(Tool(
             "semantic_search",
             "Semantic search for similar functions.",
             {"type": "object", "properties": {"query": {"type": "string"}, "top_k": {"type": "integer", "default": 5}}, "required": ["query"]},
-            lambda a: code_db.semantic_search_functions(a["query"], top_k=a.get("top_k", 5))
+            lambda a: _structured_success(code_db.semantic_search_functions(a["query"], top_k=a.get("top_k", 5)), query=a["query"], top_k=a.get("top_k", 5))
         ))
 
         self._register(Tool(
             "export_function",
             "Export a function (with tests) to JSON file.",
             {"type": "object", "properties": {"function_id": {"type": "string"}, "file": {"type": "string"}}, "required": ["function_id", "file"]},
-            lambda a: (code_db.export_function(a["function_id"], a["file"]) or {"status": "ok", "file": a["file"]})
+            lambda a: (lambda result: _structured_success(result, **result) if result.get("success") else _structured_error(result.get("error_type", "UnknownError"), result.get("message", "Export failed"), result.get("suggested_action"), result))(code_db.export_function(a["function_id"], a["file"]))
         ))
 
         self._register(Tool(
             "import_function",
             "Import a function (with tests) from JSON file.",
             {"type": "object", "properties": {"file": {"type": "string"}}, "required": ["file"]},
-            lambda a: {"new_function_id": code_db.import_function(a["file"])}
+            lambda a: (lambda result: _structured_success(result, **result) if result.get("success") else _structured_error(result.get("error_type", "UnknownError"), result.get("message", "Import failed"), result.get("suggested_action"), result))(code_db.import_function(a["file"]))
         ))
 
         self._register(Tool(
             "coverage_report",
             "Get coverage (tests passed/failed) for all functions.",
             {"type": "object", "properties": {}, "required": []},
-            lambda a: code_db.get_coverage_report()
+            lambda a: _structured_success(code_db.get_coverage_report(), function_count=len(code_db.get_coverage_report().get("functions", [])))
         ))
 
         # Optional extra tools (non-streaming for now)
@@ -305,28 +330,28 @@ class AutoCodeMCPServer:
                 "list_dependencies",
                 "List dependencies for a function.",
                 {"type": "object", "properties": {"function_id": "string"}, "required": ["function_id"]},
-                lambda a: code_db.list_dependencies(a["function_id"])
+                lambda a: _structured_success({"dependencies": code_db.list_dependencies(a["function_id"])}, function_id=a["function_id"], dependency_count=len(code_db.list_dependencies(a["function_id"])))
             ))
         if hasattr(code_db, "remove_dependency"):
             self._register(Tool(
                 "remove_dependency",
                 "Remove a dependency between two functions.",
                 {"type": "object", "properties": {"function_id": {"type": "string"}, "depends_on_id": {"type": "string"}}, "required": ["function_id", "depends_on_id"]},
-                lambda a: code_db.remove_dependency(a["function_id"], a["depends_on_id"])  # returns dict
+                lambda a: (lambda result: _structured_success(result, **result) if result.get("success") else _structured_error(result.get("error_type", "UnknownError"), result.get("message", "Remove dependency failed"), result.get("suggested_action"), result))(code_db.remove_dependency(a["function_id"], a["depends_on_id"]))
             ))
         if hasattr(code_db, "find_cycles"):
             self._register(Tool(
                 "find_cycles",
                 "Detect and return dependency cycles in the DB.",
                 {"type": "object", "properties": {}, "required": []},
-                lambda a: {"cycles": code_db.find_cycles()}
+                lambda a: _structured_success({"cycles": code_db.find_cycles()}, cycle_count=len(code_db.find_cycles()))
             ))
         if hasattr(code_db, "detect_recursion"):
             self._register(Tool(
                 "detect_recursion",
                 "Detect direct or mutual recursion for a function.",
                 {"type": "object", "properties": {"function_id": {"type": "string"}}, "required": ["function_id"]},
-                lambda a: code_db.detect_recursion(a["function_id"])  # returns dict
+                lambda a: _structured_success(code_db.detect_recursion(a["function_id"]), function_id=a["function_id"])
             ))
         if hasattr(code_db, "visualize_dependencies"):
             self._register(Tool(
@@ -340,30 +365,28 @@ class AutoCodeMCPServer:
     def _tool_generate_function(self, args: dict):
         desc = args["description"]
         module = args.get("module")
-        result = code_db.generate_julia_function(desc)
-        parsed = result.parsed
-        modules = [module] if module else None
-        fid = code_db.add_function(parsed.function_name, parsed.short_description, parsed.code, modules)
-        return {
-            "function_id": fid,
-            "name": parsed.function_name,
-            "short_description": parsed.short_description,
-            "code": parsed.code,
-            "test": parsed.tests,
-            "modules": modules or []
-        }
+        try:
+            result = code_db.generate_julia_function(desc)
+            parsed = result.parsed
+            modules = [module] if module else None
+            fid = code_db.add_function(parsed.function_name, parsed.short_description, parsed.code, modules)
+            return _structured_success({
+                "function_id": fid,
+                "name": parsed.function_name,
+                "short_description": parsed.short_description,
+                "code": parsed.code,
+                "test": parsed.tests,
+                "modules": modules or []
+            }, function_id=fid)
+        except Exception as e:
+            return _structured_error("GenerationFailed", f"Failed to generate function: {str(e)}", "Check the description or try a simpler one", {"description": desc})
 
     def _tool_generate_test(self, args: dict):
         fid = args["function_id"]
         func = code_db.get_function(fid)
         if not func:
-            return {
-                "test_id": None,
-                "code": None,
-                "warning": "FunctionNotFound",
-                "error": f"Function {fid} not found",
-                "suggested_action": "Check the function ID or create the function first."
-            }
+            return _structured_error("FunctionNotFound", f"Function {fid} not found", "Check the function ID or create the function first")
+
         # Attempt to provide signature/docstring to the test generator. If missing, try to parse from code.
         try:
             signature = func.get("signature") if isinstance(func, dict) else getattr(func, "signature", None)
@@ -376,13 +399,7 @@ class AutoCodeMCPServer:
         # If write_test_case expects (function_code, signature, docstring, function_name)
         # and code_db.write_test_case is available, call it defensively.
         if not (hasattr(code_db, "write_test_case") and code_db.write_test_case is not None):
-            return {
-                "test_id": None,
-                "code": None,
-                "warning": "NotAvailable",
-                "error": "Test generation not available on this server",
-                "suggested_action": "Install/configure the LLM client or enable test generation in this server."
-            }
+            return _structured_error("NotAvailable", "Test generation not available on this server", "Install/configure the LLM client or enable test generation in this server")
 
         try:
             # Ensure required pieces are present; try to extract using julia_parsers as fallback
@@ -399,11 +416,11 @@ class AutoCodeMCPServer:
                     pass
             try:
                 test_code = code_db.write_test_case(function_code or "", signature or "", docstring or "", function_name or "")
-            except TypeError:
+            except TypeError as e:
                 # Fallback: maybe write_test_case has a simpler signature (function_name only)
                 try:
                     test_code = code_db.write_test_case(function_name or "")
-                except Exception as e:
+                except Exception as e2:
                     # As a last-resort, generate a minimal stub test so the flow remains usable
                     test_code = (
                         f"using Test\n@testset \"auto_generated_{function_name or 'unknown'}\" begin\n"
@@ -411,7 +428,7 @@ class AutoCodeMCPServer:
                         "    @test true\nend\n"
                     )
                     # Return structured response including the original exception
-                    return {"test_id": None, "code": test_code, "warning": "write_test_case TypeError, returned stub test", "error": str(e)}
+                    return _structured_error("GeneratorError", f"Test generation failed: {str(e)}", "Try with more function context or check LLM configuration", {"fallback_stub_generated": True, "stub_code": test_code})
             except Exception as e:
                 # General failure: provide stub test and structured error details
                 test_code = (
@@ -419,15 +436,15 @@ class AutoCodeMCPServer:
                     "    # stub test generated due to generator failure\n"
                     "    @test true\nend\n"
                 )
-                return {"test_id": None, "code": test_code, "warning": "write_test_case failed, returned stub test", "error": str(e)}
+                return _structured_error("GeneratorFailure", f"Test generation failed: {str(e)}", "Check LLM configuration or try manual test creation", {"fallback_stub_generated": True, "stub_code": test_code})
 
             # Attempt to attach the test and return structured success
             try:
                 test_id = code_db.add_test(fid, args.get("name", f"auto_generated_{function_name or 'test'}"), args.get("description", "Auto-generated test"), test_code)
-                return {"test_id": test_id, "code": test_code}
+                return _structured_success({"test_id": test_id, "code": test_code}, test_id=test_id, function_id=fid)
             except Exception as e:
                 # If attaching the test fails, return the code plus error metadata
-                return {"test_id": None, "code": test_code, "warning": "add_test_failed", "error": str(e)}
+                return _structured_error("AttachTestFailed", f"Generated test but failed to attach: {str(e)}", "Check function exists and try again", {"generated_code": test_code})
         except Exception as e:
             # Catch-all to ensure structured response on unexpected failures
             test_code = (
@@ -435,9 +452,7 @@ class AutoCodeMCPServer:
                 "    # stub test generated due to unexpected server error\n"
                 "    @test true\nend\n"
             )
-            return {"test_id": None, "code": test_code, "warning": "unexpected_failure", "error": str(e)}
-        else:
-            raise RuntimeError("Test generation not available on this server")
+            return _structured_error("UnexpectedError", f"Unexpected error during test generation: {str(e)}", "Report this issue or try again", {"fallback_stub_generated": True, "stub_code": test_code})
 
     def _tool_run_tests(self, args: dict):
         """Non-streaming wrapper that calls code_db.run_tests and returns JSON-serializable results.
@@ -461,10 +476,10 @@ class AutoCodeMCPServer:
                 # Not iterable - attempt to serialize directly
                 results_list = _convert_to_serializable(maybe_results)
 
-            return {"results": results_list}
+            return _structured_success({"results": results_list}, test_count=len(results_list) if isinstance(results_list, list) else 1)
         except Exception as e:
             tb = traceback.format_exc()
-            return {"error": str(e), "traceback": tb}
+            return _structured_error("TestExecutionFailed", f"Failed to run tests: {str(e)}", "Check function exists and Julia environment is properly configured", {"traceback": tb})
 
     # ---------------- Streaming handlers -----------------
     def _stream_generate_function(self, call_id: int, args: dict, server: 'AutoCodeMCPServer'):
@@ -560,15 +575,18 @@ class AutoCodeMCPServer:
 
     def _tool_visualize_dependencies(self, args: dict):
         file_path = args["file"]
-        code_db.visualize_dependencies(file_path)
-        out = {"file": file_path, "written": True}
-        if args.get("return_content"):
-            try:
-                with open(file_path, "r", encoding="utf-8") as f:
-                    out["content"] = f.read()
-            except Exception as e:
-                out["content_error"] = str(e)
-        return out
+        try:
+            code_db.visualize_dependencies(file_path)
+            out = {"file": file_path, "written": True}
+            if args.get("return_content"):
+                try:
+                    with open(file_path, "r", encoding="utf-8") as f:
+                        out["content"] = f.read()
+                except Exception as e:
+                    out["content_error"] = str(e)
+            return _structured_success(out, filepath=file_path)
+        except Exception as e:
+            return _structured_error("VisualizationFailed", f"Failed to visualize dependencies: {str(e)}", "Check file permissions and path", {"filepath": file_path})
 
     # ---------------- Stream helpers -----------------
     def _emit_stream(self, call_id: int, event: str, data: dict):

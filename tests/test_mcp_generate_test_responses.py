@@ -29,10 +29,10 @@ def test_generate_test_missing_function(monkeypatch):
     res = server._tool_generate_test({"function_id": "nope", "name": "auto-test", "description": "generated"})
 
     assert isinstance(res, dict)
-    assert res.get("test_id") is None
-    assert res.get("code") is None
-    assert res.get("warning") == "FunctionNotFound"
-    assert "not found" in (res.get("error") or "").lower()
+    assert res.get("ok") is False
+    assert "error" in res
+    assert res["error"]["type"] == "FunctionNotFound"
+    assert "not found" in res["error"]["message"].lower()
 
 
 def test_generate_test_not_available(monkeypatch):
@@ -47,10 +47,10 @@ def test_generate_test_not_available(monkeypatch):
     res = server._tool_generate_test({"function_id": fid, "name": "auto-test", "description": "generated"})
 
     assert isinstance(res, dict)
-    assert res.get("test_id") is None
-    assert res.get("code") is None
-    assert res.get("warning") == "NotAvailable"
-    assert "not available" in (res.get("error") or "").lower()
+    assert res.get("ok") is False
+    assert "error" in res
+    assert res["error"]["type"] == "NotAvailable"
+    assert "not available" in res["error"]["message"].lower()
 
 
 def test_generate_test_write_typeerror_and_fallback_fails(monkeypatch):
@@ -69,10 +69,10 @@ def test_generate_test_write_typeerror_and_fallback_fails(monkeypatch):
     res = server._tool_generate_test({"function_id": fid, "name": "auto-test", "description": "generated"})
 
     assert isinstance(res, dict)
-    assert res.get("test_id") is None
-    assert res.get("code") is not None
-    assert "stub test" in (res.get("warning") or "") or "stub" in (res.get("code") or "")
-    assert res.get("error") is not None
+    assert res.get("ok") is False
+    assert "error" in res
+    assert res["error"]["type"] == "GeneratorError"
+    assert "fallback_stub_generated" in res["error"]["details"]
 
 
 def test_generate_test_write_general_exception(monkeypatch):
@@ -90,10 +90,10 @@ def test_generate_test_write_general_exception(monkeypatch):
     res = server._tool_generate_test({"function_id": fid, "name": "auto-test", "description": "generated"})
 
     assert isinstance(res, dict)
-    assert res.get("test_id") is None
-    assert res.get("code") is not None
-    assert res.get("warning") == "write_test_case failed, returned stub test"
-    assert "model failure" in (res.get("error") or "")
+    assert res.get("ok") is False
+    assert "error" in res
+    assert res["error"]["type"] == "GeneratorFailure"
+    assert "fallback_stub_generated" in res["error"]["details"]
 
 
 def test_generate_test_add_test_failure(monkeypatch):
@@ -115,7 +115,7 @@ def test_generate_test_add_test_failure(monkeypatch):
     res = server._tool_generate_test({"function_id": fid, "name": "auto-test", "description": "generated"})
 
     assert isinstance(res, dict)
-    assert res.get("test_id") is None
-    assert res.get("code") is not None
-    assert res.get("warning") == "add_test_failed"
-    assert "db write failed" in (res.get("error") or "")
+    assert res.get("ok") is False
+    assert "error" in res
+    assert res["error"]["type"] == "AttachTestFailed"
+    assert "generated_code" in res["error"]["details"]
